@@ -406,6 +406,13 @@ class BasicTrainer(nn.Module):
                 rasterize_mode="antialiased" if self.render_cfg.antialiased else "classic",
                 **kwargs,
             )
+            # info = meta
+            if len(info["radii"].shape) == 3:
+                # In gsplat 1.4.0, radii is a 1D vector representing the radius (major axis of the ellipse, use the 3-sigma rule) of the 2D splat.
+                # In gsplat 1.5.2, radii represents the AABB of the 2D splat.
+                # Later, radii > 0 will be used to indicate whether the splat participates in computations,
+                # and whether the AABB area > 0 is equivalent to whether the radius > 0.
+                info["radii"] = info["radii"].prod(dim=-1)  # a * b of aabb
             renders = renders[0]
             alphas = alphas[0].squeeze(-1)
             assert self.render_cfg.batch_size == 1, "batch size must be 1, will support batch size > 1 in the future"

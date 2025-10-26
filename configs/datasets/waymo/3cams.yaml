@@ -8,11 +8,13 @@
 #    4    right_camera       (1920, 866)
 
 data:
-  data_root: data/waymo/processed/training # data root for the dataset
+  # data_root: data/waymo/processed/training # data root for the dataset
+  data_root: /home/yhh/ws/reconstruct/drivestudio/data/waymo/processed/training/
   dataset: waymo
-  scene_idx: 0 # which scene to use, [0, 798] for waymo's training set and [0, 849] for nuscenes's train/val sets, inclusive
+  # scene_idx: 44 # which scene to use, [0, 798] for waymo's training set and [0, 849] for nuscenes's train/val sets, inclusive
+  scene_idx: 2 # which scene to use, [0, 798] for waymo's training set and [0, 849] for nuscenes's train/val sets, inclusive
   start_timestep: 0 # which timestep to start from
-  end_timestep: -1 # which timestep to end at, -1 means the last timestep
+  end_timestep: 5 # which timestep to end at, -1 means the last timestep
   preload_device: cuda # choose from ["cpu", "cuda"], cache the data on this device.
   pixel_source: # image source and object annotations
     type: datasets.waymo.waymo_sourceloader.WaymoPixelSource

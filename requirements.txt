@@ -1,8 +1,10 @@
-# PyTorch and related libraries
---extra-index-url https://download.pytorch.org/whl/cu117
-torch==2.0.0+cu117
-torchvision==0.15.0+cu117
-xformers==0.0.18
+# # PyTorch and related libraries
+# --extra-index-url https://download.pytorch.org/whl/cu121
+# # torch==2.0.0+cu121
+# torch==2.4.0+cu121
+# # torchvision==0.15.0+cu121
+# torchvision==0.17.1+cu121
+# xformers==0.0.18
 timm==0.9.5
 pytorch_msssim==1.0.0
 
@@ -11,7 +13,7 @@ torchmetrics==0.10.3
 
 tensorboard==2.11.0
 wandb==0.15.8
-matplotlib==3.5.3
+# matplotlib==3.5.3
 plotly==5.13.1
 viser==0.2.1
 
@@ -23,7 +25,8 @@ opencv-python
 open3d==0.16.0
 pyquaternion==0.9.9
 chumpy
-numpy==1.23.1
+numpy
+# numpy==1.23.1
 kornia==0.7.2
 
 tqdm

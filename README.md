@@ -107,10 +107,20 @@ cd drivestudio
 # Create the environment
 conda create -n drivestudio python=3.9 -y
 conda activate drivestudio
+# 安装匹配的 torch 和 torchvision（推荐）
+
+# 降级 PyTorch 以匹配 xformers 0.0.18
+# pip install torch==2.0.0 torchvision==0.15.1 xformers==0.0.18 --index-url https://download.pytorch.org/whl/cu118  # CUDA 11.8
+# pip install torch==2.2.1 torchvision==0.17.1 --index-url https://download.pytorch.org/whl/cu121
+# 安装 PyTorch 2.4.0 和兼容的 torchvision
+pip install torch==2.4.0 torchvision==0.19.0   xformers==0.0.22  --index-url https://download.pytorch.org/whl/cu121
+# pip install xformers>=0.0.22
+
 pip install -r requirements.txt
-pip install git+https://github.com/nerfstudio-project/gsplat.git@v1.3.0
-pip install git+https://github.com/facebookresearch/pytorch3d.git
+pip install git+https://github.com/nerfstudio-project/gsplat.git
+#pip install git+https://github.com/nerfstudio-project/gsplat.git@v1.3.0
 pip install git+https://github.com/NVlabs/nvdiffrast
+pip install git+https://github.com/facebookresearch/pytorch3d.git   # Pending
 
 # Set up for SMPL Gaussians
 cd third_party/smplx/
