@@ -713,10 +713,11 @@ class DrivingDataset(SceneDataset):
             
         if delete_out_of_view_points:
             self.lidar_source.delete_invisible_pts()
-            
+
+
     def get_novel_render_traj(
         self,
-        traj_types: List[str] = ["front_center_interp"],
+        traj_types: List[dict],
         target_frames: int = 100
     ) -> Dict[str, torch.Tensor]:
         """
@@ -736,20 +737,34 @@ class DrivingDataset(SceneDataset):
             are the generated novel trajectories, each of shape (target_frames, 4, 4)
         """
         per_cam_poses = {}
+
+        cam2ego = {}
+        ego2worlds = {}
+        cam_ids = []
+        cam_names = []
+
         for cam_id in self.pixel_source.camera_list:
+            # if cam_id != 0:
+            #     continue
             per_cam_poses[cam_id] = self.pixel_source.camera_data[cam_id].cam_to_worlds
-        
+            cam2ego[cam_id] = self.pixel_source.camera_data[cam_id].cam_to_ego
+            ego2worlds[cam_id] = self.pixel_source.camera_data[cam_id].ego_to_worlds
+            for _ in range(len(self.pixel_source.camera_data[cam_id].images)):
+                cam_ids.append(cam_id)
+                cam_names.append(self.pixel_source.camera_data[cam_id].cam_name)
+
         novel_trajs = {}
         for traj_type in traj_types:
-            novel_trajs[traj_type] = get_interp_novel_trajectories(
+            novel_trajs[traj_type.render_name] = get_interp_novel_trajectories(
                 self.type,
-                # self.scene_idx,
                 per_cam_poses,
                 traj_type,
-                target_frames
+                target_frames,
+                cam2ego,
+                ego2worlds,
             )
-        
-        return novel_trajs
+        return novel_trajs, cam_ids, cam_names
+
 
     def prepare_novel_view_render_data(self, traj: torch.Tensor) -> list:
             """

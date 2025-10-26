@@ -420,7 +420,8 @@ def save_videos(
     return return_frame
 
 
-def render_novel_views(trainer, render_data: list, save_path: str, fps: int = 30) -> None:
+
+def render_novel_views(trainer, render_data: list, cam_ids: list, cam_names: list, save_path: str, fps: int = 30) -> None:
     """
     Perform rendering and save the result as a video.
     
@@ -430,11 +431,18 @@ def render_novel_views(trainer, render_data: list, save_path: str, fps: int = 30
         save_path (str): Path to save the output video
         fps (int): Frames per second for the output video
     """
+    uni_camids = list(set(cam_ids))
+    render_cam_images = {}
+    render_cam_names = {}
+    for cam_id in uni_camids:
+        render_cam_images[cam_id] = []
+
     trainer.set_eval()  
     
     writer = imageio.get_writer(save_path, mode='I', fps=fps)
     
     with torch.no_grad():
+        idx = 0
         for frame_data in render_data:
             # Move data to GPU
             for key, value in frame_data["cam_infos"].items():
@@ -453,11 +461,54 @@ def render_novel_views(trainer, render_data: list, save_path: str, fps: int = 30
             rgb = outputs["rgb"].cpu().numpy().clip(
                 min=1.e-6, max=1-1.e-6
             )
-            
             # Convert to uint8 and write to video
             rgb_uint8 = (rgb * 255).astype(np.uint8)
-            writer.append_data(rgb_uint8)
+            render_cam_images[cam_ids[idx]].append(rgb_uint8)
+            render_cam_names[cam_ids[idx]] = cam_names[idx]
+            idx += 1
+            # writer.append_data(rgb_uint8)
+    # import pdb; pdb.set_trace()
+    num_cameras = len(render_cam_images)
+    num_frames = len(render_cam_images[0])
+
+    channel = render_cam_images[0][0].shape[-1]
+    landscape_width, landscape_height = render_cam_images[0][0].shape[1], render_cam_images[0][0].shape[0]
+    height = landscape_height * 2
+    width = landscape_width * 3
+    for frame_idx in range(num_frames):
+        tiled_img = np.zeros((height, width, channel), dtype=np.float32)
+        filled_mask = np.zeros((height, width), dtype=np.uint8)
+        tmp_id = 0
+        # import pdb; pdb.set_trace()
+        for cam_id in uni_camids:
+            img = render_cam_images[cam_id][frame_idx]
+            cam_name = render_cam_names[cam_id]
+            # h_id = int(tmp_id / len(uni_camids))
+            # w_id = int(tmp_id % len(uni_camids))
+            # tiled_img[h_id*landscape_height:(h_id+1)*landscape_height, w_id*landscape_width:(w_id+1)*landscape_width] = img
+            # filled_mask[h_id*landscape_height:(h_id+1)*landscape_height, w_id*landscape_width:(w_id+1)*landscape_width] = 1
+            # tmp_id += 1
+            if cam_name == "front_left_camera":
+                tiled_img[0:landscape_height, 0:landscape_width] = img
+                filled_mask[0:landscape_height, 0:landscape_width] = 1
+            elif cam_name == "front_camera":
+                tiled_img[0:landscape_height, landscape_width:2*landscape_width] = img
+                filled_mask[0:landscape_height, landscape_width:2*landscape_width] = 1
+            elif cam_name == "front_right_camera":
+                tiled_img[0:landscape_height, 2*landscape_width:3*landscape_width] = img
+                filled_mask[0:landscape_height, 2*landscape_width:3*landscape_width] = 1
+            elif cam_name == "left_camera":
+                tiled_img[landscape_height:2*landscape_height, 0:landscape_width] = img
+                filled_mask[landscape_height:2*landscape_height, 0:landscape_width] = 1
+            elif cam_name == "right_camera":
+                tiled_img[landscape_height:2*landscape_height, 2*landscape_width:3*landscape_width] = img
+                filled_mask[landscape_height:2*landscape_height, 2*landscape_width:3*landscape_width] = 1
     
+        min_y, max_y = np.where(filled_mask)[0].min(), np.where(filled_mask)[0].max()
+        min_x, max_x = np.where(filled_mask)[1].min(), np.where(filled_mask)[1].max()
+        tiled_img = tiled_img[min_y:max_y, min_x:max_x]
+        writer.append_data(tiled_img)
+        # writer.append_data(rgb_uint8)
     writer.close()
     print(f"Video saved to {save_path}")
 

@@ -150,7 +150,7 @@ def do_evaluation(
     render_novel_cfg = cfg.render.get("render_novel", None)
     if render_novel_cfg is not None:
         logger.info("Rendering novel views...")
-        render_traj = dataset.get_novel_render_traj(
+        render_traj, cam_ids, cam_names = dataset.get_novel_render_traj(
             traj_types=render_novel_cfg.traj_types,
             target_frames=render_novel_cfg.get("frames", dataset.frame_num),
         )
@@ -165,7 +165,7 @@ def do_evaluation(
             # Render and save video
             save_path = os.path.join(video_output_dir, f"{traj_type}.mp4")
             render_novel_views(
-                trainer, render_data, save_path,
+                trainer, render_data, cam_ids, cam_names, save_path,
                 fps=render_novel_cfg.get("fps", cfg.render.fps)
             )
             logger.info(f"Saved novel view video for trajectory type: {traj_type} to {save_path}")
@@ -180,7 +180,8 @@ def main(args):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     # build dataset
-    dataset = DrivingDataset(data_cfg=cfg.data)
+    cfg.project_dir = cfg.log_dir
+    dataset = DrivingDataset(data_cfg=cfg.data, project_dir=cfg.project_dir)
 
     # setup trainer
     trainer = import_str(cfg.trainer.type)(
