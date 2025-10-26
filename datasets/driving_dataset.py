@@ -236,7 +236,8 @@ class DrivingDataset(SceneDataset):
         num_frame = len(self.pixel_source.camera_data[0])
         num_cams = len(self.pixel_source.camera_data)
         if is_ground_ply:
-            pcd_path = os.path.join(self.pixel_source.camera_data[0].data_path, f"{num_cams}V_{num_frame}Frame_ground_pts.ply")
+            # pcd_path = os.path.join(self.pixel_source.camera_data[0].data_path, f"{num_cams}V_{num_frame}Frame_ground_pts.ply")
+            pcd_path = os.path.join(self.pixel_source.camera_data[0].data_path, f"densify_ground_{num_cams}V", f"points3D_ground_sr_bd_0.3.ply")
         else:
             pcd_path = os.path.join(self.pixel_source.camera_data[0].data_path, f"{num_cams}V_{num_frame}Frame_all_background_pts.ply")
         loaded_pcd = o3d.io.read_point_cloud(pcd_path)
@@ -1119,18 +1120,6 @@ class DrivingDataset(SceneDataset):
 
     def exist_novel_view_data(self, image_index: int, shift_value_name: str) -> bool:
         flag = self.novel_view_manager.exist_novel_view_data(image_index, shift_value_name)
-        new_judge = self.novel_view_manager.exist_ready_img_cam_infos(image_index, shift_value_name)
-        if flag != new_judge:
-            new_judge_exit = self.novel_view_manager.exist_img_cam_infos(image_index, shift_value_name)
-            print('flag =', flag)
-            print('new_judge =', new_judge)
-            print('new_judge_exit =', new_judge_exit)
-            import pdb; pdb.set_trace()
-            nv_img_name = f"{image_index:04d}_shift_{shift_value_name}_rank{self.novel_view_manager.rank}"
-            self.novel_view_manager.data_store[nv_img_name]['push_count']
-
-            # assert flag == new_judge, f"布尔值不匹配: flag={flag}, new_judge={new_judge}"
-        # if flag 
         return flag
 
     def push_img_cam_infos(self, image_index: int, shift_value_name: str, state, c2w, nv_img_info = None, nv_cam_info = None) -> None:

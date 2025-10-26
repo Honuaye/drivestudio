@@ -94,15 +94,6 @@ model:
         step_interval: 10
         max_gauss_ratio: 5       # threshold of ratio of gaussian max to min scale before applying regularization loss from the PhysGaussian paper
 
-  Ground:
-    type: models.gaussians.VanillaGaussians
-    init:
-      from_lidar:
-        return_color: True
-      filter_pts_in_boxes: False
-    ctrl:
-      freeze_means: True
-
   RigidNodes:
     type: models.nodes.RigidNodes
     init:

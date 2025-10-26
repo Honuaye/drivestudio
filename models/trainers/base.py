@@ -562,7 +562,7 @@ class BasicTrainer(nn.Module):
             loss_dict.update({"sky_loss_opacity": sky_loss_opacity})
 
         # if not from_synthesis and self.opacity_loss_fn is not None:  #TODOYHH
-        if self.opacity_loss_fn is not None:  #TODOYHH
+        if "Ground" in self.gaussian_classes  and self.opacity_loss_fn is not None:
             # gt_occupied_mask = (1.0 - image_info.masks.sky_mask.float()) * valid_loss_mask
             # pred_occupied_mask = outputs["opacity"].squeeze() * valid_loss_mask
             # sky_loss_opacity = (

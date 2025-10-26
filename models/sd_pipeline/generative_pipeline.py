@@ -155,7 +155,8 @@ class GenerativeReconTrainer():
             egocar_mask = torch.ones(image_info.pixels.shape[:2], device=image_info.pixels.device)
 
         # 非推理阶段： 训练SD数据，微调。
-        if not self._is_engine_inference_state(step):
+        # if not self._is_engine_inference_state(step):
+        if self._is_engine_training_state(step):
             self._prepare_generative_engine_training_data(
                 step, outputs["rgb"], image_info.pixels, valid_mask=egocar_mask
             )

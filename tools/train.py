@@ -195,7 +195,9 @@ def main(args):
     dataset = DrivingDataset(data_cfg=cfg.data, project_dir=cfg.project_dir)
 
     # adapt sd pipeline
-    use_model_parallel = cfg.multi_gpu.use_model_parallel
+    use_model_parallel = False
+    if "multi_gpu" in cfg:
+        use_model_parallel = cfg.multi_gpu.get(use_model_parallel, True)
     if use_model_parallel:
         device_recon = torch.device("cuda:0")
         device_gen = torch.device("cuda:1")
@@ -204,7 +206,8 @@ def main(args):
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         device_recon = device
         device_gen = device
-    sd_pipeline_flag = True
+    # sd_pipeline_flag = True
+    sd_pipeline_flag = cfg.get("sd_pipeline_flag", False)
     if sd_pipeline_flag:
         generative_recon_pipeline = GenerativeReconTrainer(
                 cfg=cfg,
@@ -357,17 +360,6 @@ def main(args):
                 de_img = rearrange(de_img, "c h w -> h w c")
                 # shift_value_name 可能是个 BUG 
                 old_shift_value_name = f"{generative_recon_pipeline.delta_shift * generative_recon_pipeline.current_shift_level:.1f}"
-                print(
-                    "step = ", step,
-                    "\t in-beforeTrain::save_novel_view_data :",
-                    "\t fix_shift = ", shift_value_name,
-                    "\t old_shift_value_name = ", old_shift_value_name,
-                    "\t delta_shift = ", generative_recon_pipeline.delta_shift,
-                    "\t current_shift_level = ", generative_recon_pipeline.current_shift_level,
-                    "\t image_index(save) = ", index
-                    )
-
-                tmp_print = True
                 # import pdb; pdb.set_trace()
                 dataset.save_novel_view_data(
                     index,
@@ -439,7 +431,8 @@ def main(args):
                         if k not in loss_dict:
                             loss_dict[k] = 0
                         loss_dict[k] += v
-                print('index = ', index, "\t shift_value_name = ", shift_value_name, "\t nv_infos_flag = ", nv_infos_flag)
+                if tmp_print :
+                    print('index = ', index, "\t shift_value_name = ", shift_value_name, "\t nv_infos_flag = ", nv_infos_flag)
 
         # check nan or inf
         for k, v in loss_dict.items():

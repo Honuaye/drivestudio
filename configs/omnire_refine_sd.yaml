@@ -23,9 +23,16 @@ trainer:
       #w: 0.2
       w: 1.0
     mask:
-      # w: 0.05
-      w: 0.2
+      # #w: 0.05
+      # w: 0.2
       opacity_loss_type: bce # choose from [bce, safe_bce]
+      sky:
+        #w: 0.05
+        w: 0.2
+      background: # accumulated opacity should be close 0 at road_mask and sky_mask, otherwise 1.
+        w: 0.2
+      ground: # accumulated opacity should be close to 1 within road_mask, 0 elsewhere.
+        w: 0.2
     depth:
       w: 0.01 # weight of depth loss
       inverse_depth: False # whether to use inverse depth, NOTE that when set to True, must normalize=True
@@ -86,6 +93,16 @@ model:
         w: 1.
         step_interval: 10
         max_gauss_ratio: 5       # threshold of ratio of gaussian max to min scale before applying regularization loss from the PhysGaussian paper
+
+  Ground:
+    type: models.gaussians.VanillaGaussians
+    init:
+      from_lidar:
+        return_color: True
+      filter_pts_in_boxes: False
+    ctrl:
+      freeze_means: True
+
   RigidNodes:
     type: models.nodes.RigidNodes
     init:
@@ -139,14 +156,15 @@ model:
 
 multi_gpu:
   use_model_parallel: True
+sd_pipeline_flag: True
 generative_engine:
   type: reconic.models.generative_models.SD15_GaussianFixModel
   scheduler: reconic.engines.GenerativeScheduler
-  base_model_id: /data/shared/pretrained_models/huggingface/models--runwayml--stable-diffusion-v1-5
-  pretrained_unet_weights: /data/shared/pretrained_models/sd_repair/model.safetensors
-  groundingdino_model_id: /data/shared/pretrained_models/huggingface/models--ShilongLiu--GroundingDINO
-  sam_model_id: /data/shared/pretrained_models/huggingface/models--facebook--sam-vit-huge
-  bert_model_id: /data/shared/pretrained_models/huggingface/models--bert-base-uncased
+  base_model_id: /root/autodl-tmp/LCM-runwayml-stable-diffusion-v1-5
+  # pretrained_unet_weights: /data/shared/pretrained_models/sd_repair/model.safetensors
+  groundingdino_model_id: /root/autodl-tmp/GroundingDINO/
+  sam_model_id: /root/autodl-tmp/sam-vit-huge/
+  bert_model_id: /root/autodl-tmp/bert-base-uncased/
 
   training_batch_size: 4
   inference_batch_size: 4
@@ -187,7 +205,7 @@ render:
 
 # ------------- logging ------------ #
 logging:
-  vis_freq: 2000 # how often to visualize training stats
+  vis_freq: 500 # how often to visualize training stats
   print_freq: 500 # how often to print training stats
   saveckpt_freq: 15000 # how often to save checkpoints
   save_seperate_video: True # whether to save seperate videos for each scene
