@@ -107,6 +107,8 @@ class WaymoCameraData(CameraData):
         self.intrinsics = torch.from_numpy(np.stack(intrinsics, axis=0)).float()
         self.distortions = torch.from_numpy(np.stack(distortions, axis=0)).float()
         self.cam_to_worlds = torch.from_numpy(np.stack(cam_to_worlds, axis=0)).float()
+        self.ego_to_worlds = torch.from_numpy(np.stack(ego_to_worlds, axis=0)).float()
+        self.cam_to_ego = torch.from_numpy(cam_to_ego).float()
 
     @classmethod
     def get_camera2worlds(cls, data_path: str, cam_id: str, start_timestep: int, end_timestep: int) -> torch.Tensor:

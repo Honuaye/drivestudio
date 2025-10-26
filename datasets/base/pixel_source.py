@@ -122,7 +122,10 @@ class CameraData(object):
         self.undistort = undistort
         self.buffer_downscale = buffer_downscale
         self.device = device
-        
+
+        self.ego_to_worlds = None
+        self.cam_to_ego = None
+
         self.cam_name = DATASETS_CONFIG[dataset_name][cam_id]["camera_name"]
         self.original_size = DATASETS_CONFIG[dataset_name][cam_id]["original_size"]
         self.load_size = [
@@ -643,13 +646,21 @@ class CameraData(object):
             "vehicle_masks": vehicle_mask,
             "egocar_masks": egocar_mask,
             "lidar_depth_map": lidar_depth_map,
+            "normalized_time": self.normalized_time[frame_idx],
+            "unique_img_idx": self.unique_img_idx[frame_idx],
         }
-        image_infos = {k: v for k, v in _image_infos.items() if v is not None}
-        
+        # image_infos = {k: v for k, v in _image_infos.items() if v is not None}
+        image_infos = {k: v for k, v in _image_infos.items()}
+        if self.cam_to_worlds is not None:
+            ego_to_world = self.ego_to_worlds[frame_idx]
+        if self.cam_to_ego is not None:
+            cam_to_ego = self.cam_to_ego
         cam_infos = {
             "cam_id": camera_id,
             "cam_name": self.cam_name,
             "camera_to_world": c2w,
+            "ego_to_world": ego_to_world,
+            "cam_to_ego": cam_to_ego,
             "height": torch.tensor(img_height, dtype=torch.long, device=c2w.device),
             "width": torch.tensor(img_width, dtype=torch.long, device=c2w.device),
             "intrinsics": intrinsics,

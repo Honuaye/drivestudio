@@ -17,6 +17,8 @@ from utils.visualization import get_layout
 from utils.geometry import transform_points
 from utils.camera import get_interp_novel_trajectories
 from utils.misc import export_points_to_ply, import_str
+from .novel_view_manager import NovelViewManager
+from .base.data_proto import CameraInfo, ImageInfo
 
 logger = logging.getLogger()
 
@@ -35,6 +37,7 @@ class DrivingDataset(SceneDataset):
     def __init__(
         self,
         data_cfg: OmegaConf,
+        project_dir = None,
     ) -> None:
         super().__init__(data_cfg)
         
@@ -98,7 +101,14 @@ class DrivingDataset(SceneDataset):
         # debug use
         # self.seg_dynamic_instances_in_lidar_frame(-1, frame_idx=0)
         # self.get_init_objects()
-        
+
+        # ---- create novel view manager ---- #
+        self.project_dir = project_dir
+        self.debug_mode = True
+        self.novel_view_manager = NovelViewManager(
+            os.path.join(self.project_dir, "novel_view_data"), debug_mode=self.debug_mode
+        )
+
     @property
     def instance_num(self):
         return len(self.pixel_source.instances_pose[0])
@@ -755,3 +765,74 @@ class DrivingDataset(SceneDataset):
             """
             # Call the PixelSource's method
             return self.pixel_source.prepare_novel_view_render_data(self.type, traj)
+    
+
+    # 
+    # def load_novel_view_data(
+    #     self, idx: int, base_image_info: ImageInfo, base_cam_info: CameraInfo
+    # ) -> Tuple[Optional[ImageInfo], Optional[CameraInfo]]:
+    #     image_info, cam_info = self.novel_view_manager.load_novel_view_data(
+    #         idx, base_image_info, base_cam_info, device=self.device
+    #     )
+    #     return image_info, cam_info
+
+    def save_novel_view_data(
+        self,
+        image_index: int,
+        shift_value_name: str,
+        novel_view_cam_extrinsic: torch.Tensor,
+        novel_view_render_image: torch.Tensor,
+        novel_view_render_fix_image: torch.Tensor,
+        novel_view_sky_mask: torch.Tensor,
+    ) -> None:
+        self.novel_view_manager.save_novel_view_data(
+            image_index,
+            shift_value_name,
+            novel_view_cam_extrinsic,
+            novel_view_render_image=novel_view_render_image,
+            novel_view_render_fix_image=novel_view_render_fix_image,
+            novel_view_sky_mask=novel_view_sky_mask,
+        )
+        # self.novel_view_manager.update_state(
+        #     image_index=image_index,
+        #     shift_value_name=shift_value_name,
+        #     new_state="ready",
+        # )
+
+    def exist_novel_view_data(self, image_index: int, shift_value_name: str) -> bool:
+        flag = self.novel_view_manager.exist_novel_view_data(image_index, shift_value_name)
+        new_judge = self.novel_view_manager.exist_ready_img_cam_infos(image_index, shift_value_name)
+        if flag != new_judge:
+            new_judge_exit = self.novel_view_manager.exist_img_cam_infos(image_index, shift_value_name)
+            print('flag =', flag)
+            print('new_judge =', new_judge)
+            print('new_judge_exit =', new_judge_exit)
+            import pdb; pdb.set_trace()
+            nv_img_name = f"{image_index:04d}_shift_{shift_value_name}_rank{self.novel_view_manager.rank}"
+            self.novel_view_manager.data_store[nv_img_name]['push_count']
+
+            # assert flag == new_judge, f"布尔值不匹配: flag={flag}, new_judge={new_judge}"
+        # if flag 
+        return flag
+
+    def push_img_cam_infos(self, image_index: int, shift_value_name: str, state, c2w, nv_img_info = None, nv_cam_info = None) -> None:
+        self.novel_view_manager.push_img_cam_infos(image_index, shift_value_name, state, c2w, nv_img_info, nv_cam_info)
+
+    def load_novel_view_data(
+        self,
+        image_index: int,
+        shift_value_name: str,
+        image_infos: Dict[str, torch.Tensor],
+        cam_infos: Dict[str, torch.Tensor],
+        device=None
+    ):
+        if device is None:
+            device = self.device
+        image_info, cam_info = self.novel_view_manager.load_novel_view_data(
+            image_index, shift_value_name,
+            image_infos, cam_infos, device=device
+        )
+        return image_info, cam_info
+
+    def get_img_cam_infos(self,  image_index: int, shift_value_name: str):
+        return self.novel_view_manager.get_img_cam_infos(image_index, shift_value_name)

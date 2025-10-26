@@ -441,7 +441,7 @@ class BasicTrainer(nn.Module):
     def affine_transformation(
         self,
         rgb_blended: torch.Tensor,
-        image_infos: Dict[str, torch.Tensor]
+        image_infos: Dict[str, torch.Tensor],
         ):
         if "Affine" in self.models:
             affine_trs = self.models['Affine'](image_infos)
@@ -526,12 +526,13 @@ class BasicTrainer(nn.Module):
         self,
         outputs: Dict[str, torch.Tensor],
         image_infos: Dict[str, torch.Tensor],
-        cam_infos: Dict[str, torch.Tensor]
+        cam_infos: Dict[str, torch.Tensor],
+        from_synthesis: bool = False,
     ) -> Dict[str, torch.Tensor]:
         # calculate loss
         loss_dict = {}
         
-        if "egocar_masks" in image_infos:
+        if ("egocar_masks" in image_infos) and (image_infos["egocar_masks"] is not None):
             # in the case of egocar, we need to mask out the egocar region
             valid_loss_mask = (1.0 - image_infos["egocar_masks"]).float()
         else:
@@ -557,7 +558,7 @@ class BasicTrainer(nn.Module):
             loss_dict.update({"sky_loss_opacity": sky_loss_opacity})
         
         # depth loss
-        if self.depth_loss_fn is not None:
+        if not from_synthesis and self.depth_loss_fn is not None:
             gt_depth = image_infos["lidar_depth_map"] 
             lidar_hit_mask = (gt_depth > 0).float() * valid_loss_mask
             pred_depth = outputs["depth"]
@@ -593,7 +594,7 @@ class BasicTrainer(nn.Module):
             
         # affine reg loss
         affine_reg = self.losses_dict.get("affine", None)
-        if affine_reg is not None and "Affine" in self.models:
+        if not from_synthesis and affine_reg is not None and "Affine" in self.models:
             affine_trs = self.models['Affine']({"img_idx": image_infos["img_idx"].flatten()[0]})
             reg_mat = torch.eye(3, device=self.device)
             reg_shift = torch.zeros(3, device=self.device)
@@ -604,7 +605,7 @@ class BasicTrainer(nn.Module):
 
         # dynamic region loss
         dynamic_region_weighted_losses = self.losses_dict.get("dynamic_region", None)
-        if dynamic_region_weighted_losses is not None:
+        if not from_synthesis and dynamic_region_weighted_losses is not None:
             weight_factor = dynamic_region_weighted_losses.get("w", 1.0)
             start_from = dynamic_region_weighted_losses.get("start_from", 0)
             if self.step == start_from:
@@ -618,7 +619,25 @@ class BasicTrainer(nn.Module):
                     loss_dict.update({
                         "vehicle_region_rgb_loss": weight_factor * Ll1,
                     })
-            
+
+        # # dynamic opacity loss
+        # dynamic_opacity_losses = self.losses_dict.get("dynamic_opacity", None)
+        # if not from_synthesis and dynamic_opacity_losses is not None:
+        #     weight_factor = dynamic_opacity_losses.get("w", 1.0)
+        #     start_from = dynamic_opacity_losses.get("start_from", 0)
+        #     if self.step == start_from:
+        #         self.render_dynamic_mask = True
+        #         self.use_grad_dynamic_opacity = True
+        #     if self.step > start_from and "Dynamic_opacity" in outputs:
+        #         obj_opacity = torch.clamp(outputs["Dynamic_opacity"].squeeze(), min=1e-6, max=1.0 - 1e-6)
+        #         obj_opacity_loss = torch.where(
+        #             image_info.masks.dynamic_mask.bool(),
+        #             -(obj_opacity * torch.log(obj_opacity) + (1.0 - obj_opacity) * torch.log(1.0 - obj_opacity)),
+        #             -torch.log(1.0 - obj_opacity),
+        #         ).mean()
+        #         loss_dict.update({"dynamic_opacity_loss": weight_factor * obj_opacity_loss})
+
+
         # compute gaussian reg loss
         for class_name in self.gaussian_classes.keys():
             class_reg_loss = self.models[class_name].compute_reg_loss()
