@@ -19,12 +19,14 @@ from torchmetrics.image.lpip import LearnedPerceptualImagePatchSimilarity
 from models.gaussians.basics import *
 
 logger = logging.getLogger()
+VISUALIZATION_DEBUG = False
 
 class GSModelType(IntEnum):
     Background = 0
     RigidNodes = 1
     SMPLNodes = 2
     DeformableNodes = 3
+    Ground = 4
 
 def lr_scheduler_fn(
     cfg: OmegaConf,
@@ -228,15 +230,15 @@ class BasicTrainer(nn.Module):
         self.grad_scaler = torch.cuda.amp.GradScaler(enabled=self.optim_general.get("use_grad_scaler", False))
     
     def _init_losses(self) -> None:
-        sky_opacity_loss_fn = None
+        opacity_loss_fn = None
         if "Sky" in self.models:
             if self.losses_dict.mask.opacity_loss_type == "bce":
                 from models.losses import binary_cross_entropy
-                sky_opacity_loss_fn = lambda pred, gt: binary_cross_entropy(pred, gt, reduction="mean")
+                opacity_loss_fn = lambda pred, gt: binary_cross_entropy(pred, gt, reduction="mean")
             elif self.losses_dict.mask.opacity_loss_type == "safe_bce":
                 from models.losses import safe_binary_cross_entropy
-                sky_opacity_loss_fn = lambda pred, gt: safe_binary_cross_entropy(pred, gt, limit=0.1, reduction="mean")
-        self.sky_opacity_loss_fn = sky_opacity_loss_fn
+                opacity_loss_fn = lambda pred, gt: safe_binary_cross_entropy(pred, gt, limit=0.1, reduction="mean")
+        self.opacity_loss_fn = opacity_loss_fn
         
         depth_loss_fn = None
         depth_loss_cfg = self.losses_dict.get("depth", None)
@@ -369,6 +371,8 @@ class BasicTrainer(nn.Module):
         self.pts_labels = gs_dict.pop("class_labels")
         if self.render_dynamic_mask:
             self.dynamic_pts_mask = (self.pts_labels != 0).float()
+            if GSModelType.Ground in self.gaussian_classes:
+                self.dynamic_pts_mask = self.dynamic_pts_mask & (self.pts_labels != GSModelType.Ground).float()
 
         gaussians = dataclass_gs(
             _means=gs_dict["_means"],
@@ -553,10 +557,64 @@ class BasicTrainer(nn.Module):
         })
         
         # mask loss
-        if self.sky_opacity_loss_fn is not None:
-            sky_loss_opacity = self.sky_opacity_loss_fn(pred_occupied_mask, gt_occupied_mask) * self.losses_dict.mask.w
+        if self.opacity_loss_fn is not None:
+            sky_loss_opacity = self.opacity_loss_fn(pred_occupied_mask, gt_occupied_mask) * self.losses_dict.mask.sky.w
             loss_dict.update({"sky_loss_opacity": sky_loss_opacity})
-        
+
+        # if not from_synthesis and self.opacity_loss_fn is not None:  #TODOYHH
+        if self.opacity_loss_fn is not None:  #TODOYHH
+            # gt_occupied_mask = (1.0 - image_info.masks.sky_mask.float()) * valid_loss_mask
+            # pred_occupied_mask = outputs["opacity"].squeeze() * valid_loss_mask
+            # sky_loss_opacity = (
+            #     self.opacity_loss_fn(pred_occupied_mask, gt_occupied_mask)
+            #     * self.losses_dict.mask.sky.w
+            # )
+            # loss_dict.update({"sky_loss_opacity": sky_loss_opacity})
+
+            # discourage Background in sky_mask, egocar_mask, and road_mask (front cameras only); 
+            # encourage elsewhere. no supervision in vehicle_mask regions.
+            # if 'front' in cam_info.camera_name:
+            # if 'front' in cam_infos["camera_name"]:
+            if True:
+                gt_background_occupied_mask = \
+                    (1.0 - image_infos["sky_masks"]).float() * (1.0 - image_infos["road_masks"]).float() * \
+                    valid_loss_mask * (1.0 - image_infos["vehicle_masks"]).float()
+            else:
+                gt_background_occupied_mask = (1.0 - image_infos["sky_masks"]).float() * valid_loss_mask
+            pred_background_occupied_mask = outputs["Background_opacity"].squeeze() * (1.0 - image_infos["vehicle_masks"]).float()
+            background_loss_opacity = (
+                self.opacity_loss_fn(pred_background_occupied_mask, gt_background_occupied_mask)
+                * self.losses_dict.mask.background.w
+            )
+            loss_dict.update({"background_loss_opacity": background_loss_opacity})
+
+            # encourage Ground in road_mask; discourage elsewhere.
+            # no supervision in vehicle_mask regions.
+            # gt_ground_occupied_mask = (1.0 - (1.0 - image_infos["road_masks"]).float() * valid_loss_mask) * \
+            #                           (1.0 - image_infos["vehicle_masks"]).float()
+            # pred_ground_occupied_mask = outputs["Ground_opacity"].squeeze() * (1.0 - image_infos["vehicle_masks"]).float()
+            gt_ground_occupied_mask = (1.0 - (1.0 - image_infos["road_masks"]).float() * valid_loss_mask)
+            pred_ground_occupied_mask = outputs["Ground_opacity"].squeeze() * (1.0 - (1.0 - image_infos["road_masks"]).float() * valid_loss_mask)
+
+            ground_loss_opacity = (
+                self.opacity_loss_fn(pred_ground_occupied_mask, gt_ground_occupied_mask)
+                * self.losses_dict.mask.ground.w
+            )
+            loss_dict.update({"ground_loss_opacity": ground_loss_opacity})
+
+            # if VISUALIZATION_DEBUG and self.step % 10 == 0:
+            #     debug_dir = "debug_opacities"
+            #     os.makedirs(debug_dir, exist_ok=True)
+            #     # Save the predicted and ground truth RGB images
+            #     predicted_opacity_path = os.path.join(debug_dir, f"step_{self.step}_predicted_opacity_from_raw.png")
+            #     imageio.imwrite(
+            #         predicted_opacity_path,
+            #         (torch.clamp(pred_occupied_mask, max=1.0) * 255).detach().cpu().numpy().astype(np.uint8),
+            #     )
+            #     # Save the ground truth RGB image
+            #     gt_opacity_path = os.path.join(debug_dir, f"step_{self.step}_gt_opacity_from_raw.png")
+            #     imageio.imwrite(gt_opacity_path, (gt_occupied_mask * 255).detach().cpu().numpy().astype(np.uint8))
+
         # depth loss
         if not from_synthesis and self.depth_loss_fn is not None:
             gt_depth = image_infos["lidar_depth_map"] 

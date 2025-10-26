@@ -22,8 +22,16 @@ trainer:
     ssim:
       w: 0.2
     mask:
-      w: 0.05
+      # #w: 0.05
+      # w: 0.2
       opacity_loss_type: bce # choose from [bce, safe_bce]
+      sky:
+        #w: 0.05
+        w: 0.2
+      background: # accumulated opacity should be close 0 at road_mask and sky_mask, otherwise 1.
+        w: 0.2
+      ground: # accumulated opacity should be close to 1 within road_mask, 0 elsewhere.
+        w: 0.2
     depth:
       w: 0.01 # weight of depth loss
       inverse_depth: False # whether to use inverse depth, NOTE that when set to True, must normalize=True
@@ -82,6 +90,16 @@ model:
         w: 1.
         step_interval: 10
         max_gauss_ratio: 10.       # threshold of ratio of gaussian max to min scale before applying regularization loss from the PhysGaussian paper
+
+  Ground:
+    type: models.gaussians.VanillaGaussians
+    init:
+      from_lidar:
+        return_color: True
+      filter_pts_in_boxes: False
+    ctrl:
+      freeze_means: True
+
   RigidNodes:
     type: models.nodes.RigidNodes
     init:
@@ -89,9 +107,9 @@ model:
       only_moving: true # only optimize moving instances
       traj_length_thres: 1.0 # threshold of trajectory length for moving instances
     ctrl:
-      cull_scale_thresh: 0.1
-      stop_screen_size_at: 30000
-      stop_split_at: 20000
+      reset_alpha_value: 0.1
+      cull_scale_thresh: 0.25
+      sh_degree: 1
       cull_out_of_bound: true
     reg:
       sharp_shape_reg:

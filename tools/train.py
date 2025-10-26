@@ -250,6 +250,7 @@ def main(args):
         "gt_rgbs",
         "rgbs",
         "Background_rgbs",
+        "Ground_rgbs",
         "Dynamic_rgbs",
         "RigidNodes_rgbs",
         "DeformableNodes_rgbs",

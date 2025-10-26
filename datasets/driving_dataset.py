@@ -217,7 +217,54 @@ class DrivingDataset(SceneDataset):
             sampled_time = sampled_time[..., None]
         
         return sampled_pts, sampled_color, sampled_time
-    
+
+    def get_lidar_samples_from_ply(
+        self,
+        num_samples: float = None,
+        downsample_factor: float = None,
+        return_color=False,
+        return_normalized_time=False,
+        is_ground_ply=True,
+        device: torch.device = torch.device("cpu")
+        ) -> Tensor:
+        if not is_ground_ply:
+            assert (num_samples is None) != (downsample_factor is None), \
+                "Must provide either num_samples or downsample_factor, but not both"
+        lidar_pts_xyzs = None
+        lidar_pts_colors = None
+
+        num_frame = len(self.pixel_source.camera_data[0])
+        num_cams = len(self.pixel_source.camera_data)
+        if is_ground_ply:
+            pcd_path = os.path.join(self.pixel_source.camera_data[0].data_path, f"{num_cams}V_{num_frame}Frame_ground_pts.ply")
+        else:
+            pcd_path = os.path.join(self.pixel_source.camera_data[0].data_path, f"{num_cams}V_{num_frame}Frame_all_background_pts.ply")
+        loaded_pcd = o3d.io.read_point_cloud(pcd_path)
+        lidar_pts_xyzs = torch.tensor(loaded_pcd.points, dtype=torch.float32)
+        lidar_pts_colors = torch.tensor(loaded_pcd.colors, dtype=torch.float32)
+        # import pdb; pdb.set_trace()
+        if is_ground_ply:
+            return lidar_pts_xyzs.to(device), lidar_pts_colors.to(device), None
+
+        if downsample_factor is not None:
+            num_samples = int(len(lidar_pts_xyzs) / downsample_factor)
+        if num_samples > len(lidar_pts_xyzs):
+            logger.warning(f"num_samples {num_samples} is larger than the number of points {len(lidar_pts_xyzs)}")
+            num_samples = len(lidar_pts_xyzs)
+
+        # randomly sample points
+        sampled_idx = torch.randperm(len(lidar_pts_xyzs))[:num_samples]
+        sampled_pts = lidar_pts_xyzs[sampled_idx].to(device)
+
+        # get color if needed
+        sampled_color = None
+        if return_color:
+            sampled_color = lidar_pts_colors[sampled_idx].to(device)
+
+        sampled_time = None
+        return sampled_pts, sampled_color, sampled_time
+
+
     def seg_dynamic_instances_in_lidar_frame(
         self,
         instance_ids: Union[int, list],
@@ -758,6 +805,14 @@ class DrivingDataset(SceneDataset):
     def project_alllidar_pts_get_background(self, kernel_size=6, save_ply=True, get_road_pts=True):
         num_frame = len(self.pixel_source.camera_data[0])
         num_cams = len(self.pixel_source.camera_data)
+        if get_road_pts:
+            target_ply_path = os.path.join(self.pixel_source.camera_data[0].data_path, f"{num_cams}V_{num_frame}Frame_all_ground_pts.ply")
+        else:
+            target_ply_path = os.path.join(self.pixel_source.camera_data[0].data_path, f"{num_cams}V_{num_frame}Frame_all_background_pts.ply")
+        if os.path.exists(target_ply_path):
+            print(f"skip project_lidar_pts get_ground. Exist {target_ply_path}")
+            # import pdb; pdb.set_trace()
+            return
         pcd_path = os.path.join(self.pixel_source.camera_data[0].data_path, f"{num_cams}V_{num_frame}Frame_all_pts.ply")
         loaded_pcd = o3d.io.read_point_cloud(pcd_path)
         lidar_points = torch.tensor(loaded_pcd.points, dtype=torch.float32).to(self.device)

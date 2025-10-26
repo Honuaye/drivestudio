@@ -104,16 +104,19 @@ def render(
     # rgbs
     rgbs, gt_rgbs, rgb_sky_blend, rgb_sky = [], [], [], []
     Background_rgbs, RigidNodes_rgbs, DeformableNodes_rgbs, SMPLNodes_rgbs, Dynamic_rgbs = [], [], [], [], []
+    Ground_rgbs = []
     error_maps = []
 
     # depths
     depths, lidar_on_images = [], []
     Background_depths, RigidNodes_depths, DeformableNodes_depths, SMPLNodes_depths, Dynamic_depths = [], [], [], [], []
+    Ground_depths = []
 
     # sky
     opacities, sky_masks = [], []
     Background_opacities, RigidNodes_opacities, DeformableNodes_opacities, SMPLNodes_opacities, Dynamic_opacities = [], [], [], [], []
-    
+    Ground_opacities = []
+
     # misc
     cam_names, cam_ids = [], []
 
@@ -163,6 +166,12 @@ def render(
                     "Background_opacity"
                 ] + green_background * (1 - results["Background_opacity"])
                 Background_rgbs.append(get_numpy(Background_rgb))
+            if "Ground_rgb" in results:
+                Ground_rgb = results["Ground_rgb"] * results[
+                    "Ground_opacity"
+                ] + green_background * (1 - results["Ground_opacity"])
+                Ground_rgbs.append(get_numpy(Ground_rgb))
+
             if "RigidNodes_rgb" in results:
                 RigidNodes_rgb = results["RigidNodes_rgb"] * results[
                     "RigidNodes_opacity"
@@ -204,6 +213,9 @@ def render(
             if "Background_depth" in results:
                 Background_depths.append(get_numpy(results["Background_depth"]))
                 Background_opacities.append(get_numpy(results["Background_opacity"]))
+            if "Ground_depth" in results:
+                Ground_depths.append(get_numpy(results["Ground_depth"]))
+                Ground_opacities.append(get_numpy(results["Ground_opacity"]))
             if "RigidNodes_depth" in results:
                 RigidNodes_depths.append(get_numpy(results["RigidNodes_depth"]))
                 RigidNodes_opacities.append(get_numpy(results["RigidNodes_opacity"]))
@@ -350,6 +362,8 @@ def render(
         results_dict["lidar_on_images"] = lidar_on_images
     if len(Background_rgbs) > 0:
         results_dict["Background_rgbs"] = Background_rgbs
+    if len(Ground_rgbs) > 0:
+        results_dict["Ground_rgbs"] = Ground_rgbs
     if len(RigidNodes_rgbs) > 0:
         results_dict["RigidNodes_rgbs"] = RigidNodes_rgbs
     if len(DeformableNodes_rgbs) > 0:
@@ -360,6 +374,8 @@ def render(
         results_dict["Dynamic_rgbs"] = Dynamic_rgbs
     if len(Background_depths) > 0:
         results_dict["Background_depths"] = Background_depths
+    if len(Ground_depths) > 0:
+        results_dict["Ground_depths"] = Ground_depths
     if len(RigidNodes_depths) > 0:
         results_dict["RigidNodes_depths"] = RigidNodes_depths
     if len(DeformableNodes_depths) > 0:
@@ -370,6 +386,8 @@ def render(
         results_dict["Dynamic_depths"] = Dynamic_depths
     if len(Background_opacities) > 0:
         results_dict["Background_opacities"] = Background_opacities
+    if len(Ground_opacities) > 0:
+        results_dict["Ground_opacities"] = Ground_opacities
     if len(RigidNodes_opacities) > 0:
         results_dict["RigidNodes_opacities"] = RigidNodes_opacities
     if len(DeformableNodes_opacities) > 0:
