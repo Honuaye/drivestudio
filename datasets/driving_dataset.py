@@ -48,8 +48,7 @@ class DrivingDataset(SceneDataset):
         self.type = self.data_cfg.dataset
         try: # For Waymo, NuScenes, ArgoVerse, PandaSet
             self.data_path = os.path.join(
-                self.data_cfg.data_root,
-                f"{int(self.scene_idx):03d}"
+                self.data_cfg.data_root
             )
         except: # For KITTI, NuPlan
             self.data_path = os.path.join(self.data_cfg.data_root, self.scene_idx)
@@ -734,7 +733,7 @@ class DrivingDataset(SceneDataset):
         for traj_type in traj_types:
             novel_trajs[traj_type] = get_interp_novel_trajectories(
                 self.type,
-                self.scene_idx,
+                # self.scene_idx,
                 per_cam_poses,
                 traj_type,
                 target_frames

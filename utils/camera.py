@@ -57,7 +57,7 @@ def look_at_rotation(direction: torch.Tensor, up: torch.Tensor = torch.tensor([0
 
 def get_interp_novel_trajectories(
     dataset_type: str,
-    scene_idx: str,
+    # scene_idx: str,
     per_cam_poses: Dict[int, torch.Tensor],
     traj_type: str = "front_center_interp",
     target_frames: int = 100

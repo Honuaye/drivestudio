@@ -1,0 +1,330 @@
+seed: 6666
+
+multi_gpu:
+  use_model_parallel: False
+
+# ------------- Dataset ------------ #
+data:
+  type: reconic.datasets.driving_dataset.DrivingDataset
+  # data root for the dataset
+  # data_root: /data/workspace/dataset_reconic/012
+  data_root: /data/sgo/selected_reconstructs/e2e/hc25-LC0C76C44S7051320-2025-06-27_09-11-34.record.00002/data_lidar_range_150
+  dataset: waymo
+  # NoneType for argoflow production environment
+  scene_idx: 
+  # which timestep to start from, argoflow parameter
+  start_timestep: 0
+  # which timestep to end at, -1 means the last timestep, argoflow parameter
+  end_timestep: -1
+  # choose from ["cpu", "cuda"], cache the data on this device.
+  preload_device: cpu
+  num_workers: 1 # 8
+  prefetch_factor: 1 # 4
+  # the training proportion of range when training pixel and range
+  range_training_percentage: 0.5
+  base_source:
+    # use every Nth timestep for the test set. if 0, use all data for training and none for testing
+    test_timestep_stride: 0
+  pixel_source: # image source and object annotations
+    type: reconic.datasets.waymo.waymo_sourceloader.WaymoPixelSource
+    # whether to load pixel
+    load_pixel: True
+    # which cameras to use
+    cameras: [0, 1, 2, 3, 4, 5, 6]
+    # the size of the images to load
+    downscale_when_loading: [2, 2, 2, 2, 2, 2, 2]
+    # downscale factor wrt to the downscale_when_loading, argoflow parameter
+    downscale: 1
+    # whether to undistort the images
+    undistort: False
+    # use every Nth timestep for the test set. if 0, use all images for training and none for testing
+    test_image_stride: 0
+    # whether to load sky mask
+    load_sky_mask: True
+    # whether to load road mask
+    load_road_mask: True
+    # whether to load depth map, used for 2D depth supervision
+    load_depthmap: True
+    # whether to load dynamic mask
+    load_dynamic_mask: True
+    # whether to load object bounding boxes
+    load_objects: True
+    # whether to load SMPL template for pedestrians
+    load_smpl: False
+    # if > 0, raise egomask to by a specified pixel height at the original resolution
+    egocar_margin: 100
+  sampler: # error based image sampler
+    # downscale factor for the buffer wrt load_size
+    buffer_downscale: 8
+    # the percentage of images sampled according to the error buffer
+    buffer_ratio: 0.5
+    # give more chance to sample starting frames, which usually have more errors
+    start_enhance_weight: 3
+  lidar_source: # everything related to "lidar" --- from lidar points
+    type: reconic.datasets.waymo.waymo_sourceloader.WaymoLiDARSource
+    # whether to load lidar
+    load_lidar: True
+    # whether to only use the top lidar
+    only_use_top_lidar: True
+    # max range for truncated lidar in a ego-centric coordinate system
+    truncated_max_range: 200
+    # min range for truncated lidar in a ego-centric coordinate system.
+    truncated_min_range: -200
+    # ---- compute aabb from lidar ---- #
+    # if load_lidar is True, we compute aabb from lidar, otherwise we compute aabb from cameras
+    # 1) downsample lidar by random sampling to 1/lidar_downsample_factor number of points
+    # 2) compute aabb from the downsampled lidar points by using the percentile of lidar_percentiles
+    # downsample lidar by this factor to compute percentile
+    lidar_downsample_factor: 4
+    # percentile to compute aabb from lidar
+    lidar_percentile: 0.02
+  range_source: # everything related to "range source" --- from range images
+    type: reconic.datasets.base.range_source.SceneRangeSource
+    beam_inclination: [7.09, 6.69, 6.28, 5.87, 5.46, 5.05, 4.65, 4.24, 3.84, 3.43, 3.03, 2.62, 2.41, 2.21, 2.01, 1.81, 1.61, 1.41, 1.21, 1.00, 0.81, 0.60, 0.40, 0.20, 0.00, -0.20, -0.41, -0.61, -0.81, -1.01, -1.21, -1.41, -1.61, -1.81, -2.02, -2.21, -2.42, -2.62, -2.83, -3.02, -3.23, -3.42, -3.64, -3.83, -4.04, -4.23, -4.45, -4.64, -5.05, -5.45, -5.86, -6.26, -6.66, -7.07, -7.47, -7.88, -8.25, -8.66, -9.07, -9.47, -10.03, -10.84, -11.82, -13.03, 2.52, 2.31, 2.11, 1.91, 1.71, 1.51, 1.31, 1.11, 0.91, 0.70, 0.50, 0.30, 0.10, -0.10, -0.30, -0.51, -0.71, -0.91, -1.11, -1.31, -1.51, -1.71, -1.91, -2.12, -2.32, -2.52, -2.72, -2.92, -3.13, -3.33, -3.53, -3.73, -3.94, -4.14, -4.34, -4.55]
+    horizon_angle: 120.0
+    horizon_resolution: 0.1
+    # whether to load lidar
+    load_range: True
+
+# ------------- Trainer ------------ #
+recon_trainer:
+  type: reconic.trainers.MultiTrainer
+  # type: reconic.trainers.MultiRangeTrainer
+  optim:
+    # argoflow parameter
+    num_iters: 80000
+    # enter batch mode after batch_iters
+    batch_iters: 80000
+    use_grad_scaler: false
+    # if > 0, use error based image sampler for training
+    cache_buffer_freq: -1
+    # if > 0, whan the total gaussian number exceeds it, densification stops by setting stop_split_at
+    # to avoid OOM. with an L20 48G GPU, 16,000,000 (pixel+sd)is recommended.
+    # 14,000,000 (pixel+range)is recommended.
+    max_gauss_number: -1
+  render:
+    # near plane for rendering
+    near_plane: 0.1
+    # far plane for rendering
+    far_plane: 10000000000.0
+    # whether to use antialiasing for gaussian rendering, supported by gsplat kernel
+    antialiased: false
+    # whether to use packed rendering, supported by gsplat kernel
+    packed: false
+    # whether to use absolute gradient for rendering, supported by gsplat kernel
+    absgrad: true
+    # whether to use sparse gradient for rendering, supported by gsplat kernel
+    sparse_grad: false
+    # batch size for rendering, currently only support 1
+    batch_size: 1
+  losses:
+    rgb:
+      # w: 0.8
+      w: 1.2
+    ssim:
+      # w: 0.2
+      w: 1.0
+    mask:
+      # w: 0.05
+      w: 0.2
+    # choose from [bce, safe_bce]
+    opacity_loss_type: bce
+    depth:
+      # weight of depth loss
+      w: 0.01
+      # whether to use inverse depth, NOTE that when set to True, must normalize=True
+      inverse_depth: False
+      # whether to normalize depth loss
+      normalize: False
+      # choose from ["l1", "l2"]
+      loss_type: l1
+      # max depth size to supervise
+      upper_bound: 200
+      # Ignore depth loss for pixels with depth error greater than this percentile
+      depth_error_percentile: 0.99
+    affine:
+      # weight of affine regularization
+      w: 0.00001
+    range:
+      depth_l1: 1.0
+      intensity_l1: 0.85
+      intensity_l2: 0.0
+      intensity_dssim: 0.15
+      raydrop_bce: 0.01
+      lambda_cd: 0.01
+      L1_mean_percent: 0.8
+      cd_mean_percent: 0.9
+  gaussian_optim_general_cfg:
+    xyz:
+      lr: 1.6e-04
+      lr_final: 1.6e-06
+      # str or float, if "scene_scale", scale the learning rate by the scene scale
+      scale_factor: 20
+    sh_dc_pixel:
+      lr: 0.0025
+    sh_rest_pixel:
+      lr: 0.000125
+    sh_dc_range:
+      lr: 0.0025
+    sh_rest_range:
+      lr: 0.000125
+    opacity:
+      # lr: 0.05
+      lr: 0.01
+    scaling:
+      # lr: 0.005
+      lr: 0.001
+    rotation:
+      lr: 0.001
+  gaussian_ctrl_general_cfg:
+    # warmup steps for alpha
+    warmup_steps: 500
+    # reset alpha every n steps
+    reset_alpha_interval: 6000
+    # refine gaussians every n steps
+    refine_interval: 100
+    # every n intervals turn on another sh degree
+    sh_degree_interval: 1000
+    # number of samples to split gaussians into
+    n_split_samples: 2
+    # may differ in different models
+    reset_alpha_value: 0.01
+    # densify_grad_thresh: 0.0005 # above this grad, gaussians are densified
+    # densify_size_thresh: 0.003 # below this size, gaussians are *duplicated*, otherwise split
+    densify_grad_thresh: 0.002 # 7v
+    densify_size_thresh: 0.0005
+    # threshold of opacity for culling gaussians
+    cull_alpha_thresh: 0.005
+    # threshold of scale for culling gaussians
+    cull_scale_thresh: 0.5
+    # if a gaussian is more than this percent of screen space, cull it
+    cull_screen_size: 0.15
+    # if a gaussian is more than this percent of screen space, split it
+    split_screen_size: 0.05
+    # stop culling/splitting at this step WRT screen size of gaussians
+    stop_screen_size_at: 8000
+    # stop splitting at this step, max_gauss_number may reset it
+    stop_split_at: 40000
+    # sh degree for camera gaussians
+    sh_degree_pixel: 3
+    # sh degree for lidar gaussians
+    sh_degree_range: 1
+    # whether to freeze means for gaussians during training
+    freeze_means: False
+
+# ------------- Model ------------ #
+model:
+  Background:
+    type: reconic.models.gaussians.VanillaGaussians
+    init:
+      from_lidar:
+        num_samples: 7_000_000
+        return_color: True
+        mask_mode: ground_excluded
+        near_randoms: 200_000
+        far_randoms: 1_000_000
+    reg:
+      sharp_shape_reg:
+        w: 1.0
+        step_interval: 10
+        # threshold of ratio of gaussian max to min scale before applying regularization loss from the PhysGaussian paper
+        max_gauss_ratio: 5
+    ctrl:
+      gaussian_2d: False
+  Ground:
+    type: reconic.models.gaussians.VanillaGaussians
+    init:
+      from_lidar:
+        return_color: True
+        mask_mode: ground_only
+        filter_pts_in_boxes: False
+    ctrl:
+      freeze_means: True
+      gaussian_2d: False
+  RigidNodes:
+    type: reconic.models.nodes.RigidNodes
+    init:
+      # max initial points for each instance
+      instance_max_pts: 8000
+      # only optimize moving instances
+      only_moving: true
+      # threshold of trajectory length for moving instances
+      traj_length_thres: 1.0
+    ctrl:
+      # cull_scale_thresh: 0.1
+      # stop_screen_size_at: 50000
+      # stop_split_at: 50000
+      reset_alpha_value: 0.1
+      cull_scale_thresh: 0.25
+      sh_degree: 1
+      cull_out_of_bound: true
+      # densify_grad_thresh: 0.002
+      # densify_size_thresh: 0.0005
+      sharp_shape_reg:
+        w: 1.0
+        step_interval: 10
+        max_gauss_ratio: 10
+      temporal_smooth_reg:
+        trans:
+          # w: 0.01 # optimal value may vary
+          w: 0.001
+          # no ablation
+          smooth_range: 5
+    optim:
+      ins_rotation:
+        lr: 0.00001
+        lr_final: 0.000005
+      ins_translation:
+        lr: 0.0005
+        lr_final: 0.0001
+  # Sky:
+  #   type: reconic.models.modules.EnvLight
+  #   params:
+  #     resolution: 1024
+  #   optim:
+  #     all:
+  #       lr: 0.01
+  Sky:
+    type: reconic.models.modules.SkyModel
+    params:
+      head_mlp_layer_width: 64
+      enable_appearance_embedding: False
+      appearance_embedding_dim: 16
+    optim:
+      all:
+        lr: 0.01
+  Affine:
+    type: reconic.models.modules.AffineTransform
+    params:
+      embedding_dim: 4
+      base_mlp_layer_width: 64
+      pixel_affine: False
+    optim:
+      all:
+        lr: 1.0e-5
+        weight_decay: 1.0e-6
+  CamPose:
+    type: reconic.models.modules.CameraOptModule
+    optim:
+      all:
+        lr: 1.0e-5
+        weight_decay: 1.0e-6
+
+# ------------- render ------------ #
+render:
+  # frames per second for the main rendered output
+  fps: 10
+  # whether to render full resolution videos
+  render_full: True
+  # whether to render test set
+  render_test: True
+  render_novel:
+    traj_types:
+      - type: relative_lane_shift
+        direction: x
+        distance: 1.5
+        render_name: lane_shift_left_1.5m
+      - type: relative_lane_shift
+        direction: x
+        distance: 3.0
+        render
