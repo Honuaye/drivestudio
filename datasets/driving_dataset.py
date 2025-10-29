@@ -198,7 +198,7 @@ class DrivingDataset(SceneDataset):
             "Must provide either num_samples or downsample_factor, but not both"
         if downsample_factor is not None:
             num_samples = int(len(self.lidar_source.pts_xyz) / downsample_factor)
-        if num_samples > len(self.lidar_source.pts_xyz):
+        if (num_samples > len(self.lidar_source.pts_xyz)) or (num_samples <= 0):
             logger.warning(f"num_samples {num_samples} is larger than the number of points {len(self.lidar_source.pts_xyz)}")
             num_samples = len(self.lidar_source.pts_xyz)
         
@@ -249,7 +249,7 @@ class DrivingDataset(SceneDataset):
 
         if downsample_factor is not None:
             num_samples = int(len(lidar_pts_xyzs) / downsample_factor)
-        if num_samples > len(lidar_pts_xyzs):
+        if (num_samples > len(lidar_pts_xyzs)) or (num_samples <= 0):
             logger.warning(f"num_samples {num_samples} is larger than the number of points {len(lidar_pts_xyzs)}")
             num_samples = len(lidar_pts_xyzs)
 

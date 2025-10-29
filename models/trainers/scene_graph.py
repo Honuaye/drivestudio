@@ -7,7 +7,8 @@ from datasets.driving_dataset import DrivingDataset
 from models.trainers.base import BasicTrainer, GSModelType
 from utils.misc import import_str
 from utils.geometry import uniform_sample_sphere
-
+import open3d as o3d
+import  numpy  as  np
 logger = logging.getLogger()
 
 class MultiTrainer(BasicTrainer):
@@ -139,6 +140,18 @@ class MultiTrainer(BasicTrainer):
                 else:
                     sampled_pts, sampled_color, sampled_time = \
                         torch.empty(0, 3).to(self.device), torch.empty(0, 3).to(self.device), None
+
+                if class_name == 'Background' and ("voxel_size" in init_cfg) and (init_cfg.voxel_size > 0):
+                    # do downsample_factor
+                    point_cloud = o3d.geometry.PointCloud()
+                    point_cloud.points = o3d.utility.Vector3dVector(sampled_pts.cpu().detach().numpy())
+                    point_cloud.colors = o3d.utility.Vector3dVector(sampled_color.cpu().detach().numpy())
+                    downsampled_point_cloud = point_cloud.voxel_down_sample(voxel_size=init_cfg.voxel_size)
+                    downsampled_point_cloud, _ = downsampled_point_cloud.remove_radius_outlier(nb_points=10, radius=0.5)
+                    sampled_pts_np = np.asarray(downsampled_point_cloud.points).astype(np.float32)
+                    sampled_color_np = np.asarray(downsampled_point_cloud.colors).astype(np.float32)
+                    sampled_pts = torch.from_numpy(sampled_pts_np).to(self.device)
+                    sampled_color = torch.from_numpy(sampled_color_np).to(self.device)
                 
                 random_pts = []
                 num_near_pts = init_cfg.get('near_randoms', 0)

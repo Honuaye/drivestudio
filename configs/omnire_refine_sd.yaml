@@ -84,10 +84,12 @@ model:
     type: models.gaussians.VanillaGaussians
     init:
       from_lidar:
-        num_samples: 8_000_000
+        num_samples: -1
+        # num_samples: 8_000_000
         return_color: True
       near_randoms: 200_000
       far_randoms: 1_000_000
+      voxel_size: 0.1
     reg:
       sharp_shape_reg:
         w: 1.
