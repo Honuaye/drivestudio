@@ -1126,7 +1126,7 @@ class ScenePixelSource(abc.ABC):
         """
         return self.data_cfg.sampler.buffer_downscale
     
-    def prepare_novel_view_render_data(self, dataset_type: str, traj: torch.Tensor) -> list:
+    def prepare_novel_view_render_data(self, dataset_type: str, traj: torch.Tensor, cam_ids, cam_names) -> list:
         """
         Prepare all necessary elements for novel view rendering.
 
@@ -1149,10 +1149,20 @@ class ScenePixelSource(abc.ABC):
         
         original_frame_count = self.num_frames
         scaled_indices = torch.linspace(0, original_frame_count - 1, len(traj))
-        normed_time = torch.linspace(0, 1, len(traj))
+        # normed_time = torch.linspace(0, 1, len(traj))
+        normed_time = torch.linspace(0, 1, original_frame_count)
         
         render_data = []
+        camids_set = list(set(cam_ids))
+        num_camera = len(camids_set)
+
         for i in range(len(traj)):
+            camera_idx = cam_ids[i]
+            cam_name = cam_names[i]
+            frame_idx = int(i%original_frame_count)
+            img_idx = frame_idx * num_camera + camera_idx
+            print('camera_idx=',camera_idx, 'frame_idx=',frame_idx, 'img_idx=',img_idx,)
+
             c2w = traj[i]
             
             # Generate ray origins and directions
@@ -1165,6 +1175,7 @@ class ScenePixelSource(abc.ABC):
             direction_norm = direction_norm.reshape(H, W, 1)
             
             cam_infos = {
+                "cam_id": torch.tensor([cam_ids[i]], dtype=torch.long, device=self.device),
                 "camera_to_world": c2w,
                 "intrinsics": intrinsics,
                 "height": torch.tensor([H], dtype=torch.long, device=self.device),
@@ -1175,17 +1186,22 @@ class ScenePixelSource(abc.ABC):
                 "origins": origins,
                 "viewdirs": viewdirs,
                 "direction_norm": direction_norm,
-                "img_idx": torch.full((H, W), i, dtype=torch.long, device=self.device),
-                "frame_idx": torch.full((H, W), scaled_indices[i].round().long(), device=self.device),
-                "normed_time": torch.full((H, W), normed_time[i], dtype=torch.float32, device=self.device),
+                "img_idx": torch.full((H, W), img_idx, dtype=torch.long, device=self.device),
+                # "img_idx": torch.full((H, W), i, dtype=torch.long, device=self.device),
+                "frame_idx": torch.full((H, W), frame_idx,  dtype=torch.long, device=self.device),
+                # "frame_idx": torch.full((H, W), scaled_indices[i].round().long(), device=self.device),
+                "normed_time": torch.full((H, W), normed_time[frame_idx], dtype=torch.float32, device=self.device),
+                # "normed_time": torch.full((H, W), normed_time[i], dtype=torch.float32, device=self.device),
                 "pixel_coords": torch.stack(
                     [y.float() / H, x.float() / W], dim=-1
                 ),  # [H, W, 2]
             }
-            
+
             render_data.append({
+                # "img_idx": img_idx,
+                # "camera_idx": camera_idx,
+                # "cam_name": cam_name,
                 "cam_infos": cam_infos,
                 "image_infos": image_infos,
             })
-        
         return render_data

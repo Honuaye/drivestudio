@@ -160,7 +160,7 @@ def do_evaluation(
         
         for traj_type, traj in render_traj.items():
             # Prepare rendering data
-            render_data = dataset.prepare_novel_view_render_data(traj)
+            render_data = dataset.prepare_novel_view_render_data(traj, cam_ids, cam_names)
             
             # Render and save video
             save_path = os.path.join(video_output_dir, f"{traj_type}.mp4")

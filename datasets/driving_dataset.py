@@ -1070,7 +1070,7 @@ class DrivingDataset(SceneDataset):
         return novel_trajs, cam_ids, cam_names
 
 
-    def prepare_novel_view_render_data(self, traj: torch.Tensor) -> list:
+    def prepare_novel_view_render_data(self, traj: torch.Tensor, cam_ids, cam_names) -> list:
             """
             Prepare all necessary elements for novel view rendering.
 
@@ -1083,7 +1083,7 @@ class DrivingDataset(SceneDataset):
                     - image_infos: Image-related information (indices, normalized time, viewdirs, etc.)
             """
             # Call the PixelSource's method
-            return self.pixel_source.prepare_novel_view_render_data(self.type, traj)
+            return self.pixel_source.prepare_novel_view_render_data(self.type, traj, cam_ids, cam_names)
     
 
     # 
