@@ -236,8 +236,8 @@ class DrivingDataset(SceneDataset):
         num_frame = len(self.pixel_source.camera_data[0])
         num_cams = len(self.pixel_source.camera_data)
         if is_ground_ply:
-            # pcd_path = os.path.join(self.pixel_source.camera_data[0].data_path, f"{num_cams}V_{num_frame}Frame_ground_pts.ply")
-            pcd_path = os.path.join(self.pixel_source.camera_data[0].data_path, f"densify_ground_{num_cams}V", f"points3D_ground_sr_bd_0.3.ply")
+            pcd_path = os.path.join(self.pixel_source.camera_data[0].data_path, f"{num_cams}V_{num_frame}Frame_ground_pts.ply")
+            # pcd_path = os.path.join(self.pixel_source.camera_data[0].data_path, f"densify_ground_{num_cams}V", f"points3D_ground_sr_bd_0.3.ply")
         else:
             pcd_path = os.path.join(self.pixel_source.camera_data[0].data_path, f"{num_cams}V_{num_frame}Frame_all_background_pts.ply")
         loaded_pcd = o3d.io.read_point_cloud(pcd_path)
