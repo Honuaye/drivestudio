@@ -180,6 +180,9 @@ class GenerativeReconTrainer():
     def _is_engine_inference_state(self, step):
         if step == self.cfg.joint_training_cfg.start_engine_infer_at:
             self.generative_scheduler.set_eval()
+            # import pdb; pdb.set_trace()
+            unet_save_path = "/root/ws/trained_unet_refine"
+            self.generative_scheduler.generative_engine.unet.save_pretrained(unet_save_path)
         return step >= self.cfg.joint_training_cfg.start_engine_infer_at
 
     # OK
