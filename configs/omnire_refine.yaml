@@ -1,6 +1,5 @@
 seed: 0
 dataset: waymo/3cams
-# dataset: /home/yhh/ws/reconstruct/drivestudio/data/waymo/processed/training/044
 # ------------- Trainer ------------ #
 trainer:
   type: models.trainers.MultiTrainer
@@ -18,9 +17,11 @@ trainer:
     batch_size: 1 # batch size for rendering, currently only support 1
   losses:
     rgb:
-      w: 0.8
+      #w: 0.8
+      w: 1.2
     ssim:
-      w: 0.2
+      #w: 0.2
+      w: 1.0
     mask:
       # #w: 0.05
       # w: 0.2
@@ -52,9 +53,11 @@ trainer:
     sh_rest:
       lr: 0.000125
     opacity:
-      lr: 0.05
+      #lr: 0.05
+      lr: 0.01
     scaling:
-      lr: 0.005
+      #lr: 0.005
+      lr: 0.001
     rotation:
       lr: 0.001
   gaussian_ctrl_general_cfg:
@@ -65,8 +68,8 @@ trainer:
     n_split_samples: 2            # number of samples to split gaussians into
     # may differ in different models
     reset_alpha_value: 0.01       # reset alpha to this value
-    densify_grad_thresh: 0.0005   # above this grad, gaussians are densified
-    densify_size_thresh: 0.003    # below this size, gaussians are *duplicated*, otherwise split
+    densify_grad_thresh: 0.002
+    densify_size_thresh: 0.0005
     cull_alpha_thresh: 0.005      # threshold of opacity for culling gaussians
     cull_scale_thresh: 0.5        # threshold of scale for culling gaussians
     cull_screen_size: 0.15        # if a gaussian is more than this percent of screen space, cull it
@@ -81,15 +84,17 @@ model:
     type: models.gaussians.VanillaGaussians
     init:
       from_lidar:
-        num_samples: 800_000
+        # num_samples: -1
+        num_samples: 8_000_000
         return_color: True
-      near_randoms: 100_000
-      far_randoms: 100_000
+      near_randoms: 200_000
+      far_randoms: 1_000_000
+      # voxel_size: 0.1
     reg:
       sharp_shape_reg:
         w: 1.
         step_interval: 10
-        max_gauss_ratio: 10.       # threshold of ratio of gaussian max to min scale before applying regularization loss from the PhysGaussian paper
+        max_gauss_ratio: 5       # threshold of ratio of gaussian max to min scale before applying regularization loss from the PhysGaussian paper
 
   Ground:
     type: models.gaussians.VanillaGaussians
@@ -127,130 +132,6 @@ model:
       ins_translation:
         lr: 0.0005
         lr_final: 0.0001
-  # DeformableNodes:
-  #   type: models.nodes.DeformableNodes
-  #   init:
-  #     instance_max_pts: 5000
-  #     only_moving: true
-  #     traj_length_thres: 0.5
-  #   networks:
-  #     D: 8
-  #     W: 256
-  #     embed_dim: 16
-  #     x_multires: 10                # default 10
-  #     t_multires: 10                # default 10
-  #     deform_quat: True
-  #     deform_scale: False
-  #   ctrl:
-  #     reset_alpha_value: 0.1
-  #     cull_scale_thresh: 0.1
-  #     stop_screen_size_at: 30000
-  #     stop_split_at: 20000
-  #     sh_degree: 3
-  #     cull_out_of_bound: false
-  #     use_deformgs_for_nonrigid: True # default True
-  #     use_deformgs_after: 3000        # default 3000
-  #     stop_optimizing_canonical_xyz: True
-  #   reg:
-  #     sharp_shape_reg:
-  #       w: 1.
-  #       step_interval: 10
-  #       max_gauss_ratio: 10.
-  #     out_of_bound_loss:
-  #       w: 1.
-  #       stop_after: 30000
-  #     temporal_smooth_reg:
-  #       trans:
-  #         w: 0.01 # optimal value may vary
-  #         smooth_range: 5 # optimal value may vary
-  #   optim:
-  #     xyz:
-  #       lr: 1.6e-04
-  #       lr_final: 1.6e-06
-  #       scale_factor: 2.
-  #     embedding:
-  #       lr: 0.001
-  #       lr_final: 0.0001
-  #     deform_network:
-  #       lr: 1.6e-03
-  #       lr_final: 1.6e-04
-  #       scale_factor: 5.
-  #     ins_rotation:
-  #       lr: 0.00001
-  #       lr_final: 0.000005
-  #     ins_translation:
-  #       lr: 0.0005
-  #       lr_final: 0.0001
-  # SMPLNodes: 
-  #   type: models.nodes.SMPLNodes
-  #   init:
-  #     only_moving: true
-  #     traj_length_thres: 0.5
-  #   reg:
-  #     sharp_shape_reg:
-  #       w: 1.
-  #       step_interval: 10
-  #       max_gauss_ratio: 10.
-  #     temporal_smooth_reg:
-  #       trans:
-  #         w: 0.01 # optimal value may vary
-  #         smooth_range: 5 # range of frames to consider for smoothing
-  #       # joint_smooth:
-  #       #   w: 0.01 # optimal value may vary
-  #     knn_reg:
-  #       # lambda_std_x: 0.0001
-  #       lambda_std_q: 0.001
-  #       lambda_std_s: 0.001
-  #       lambda_std_o: 0.001
-  #       lambda_std_shs_dc: 0.001
-  #       lambda_std_shs_rest: 0.001
-  #     max_s_square_reg:
-  #       w: 0.05
-  #     x_offset:
-  #       w: 0.2
-  #     voxel_deformer_reg:
-  #       lambda_std_w: 0.6
-  #       lambda_std_w_rest: 0.5
-  #       lambda_w_norm: 0.6
-  #       lambda_w_rest_norm: 0.3
-  #   optim:
-  #     xyz:
-  #       lr: 1.6e-04
-  #       lr_final: 1.6e-06
-  #       scale_factor: 3.0
-  #     rotation:
-  #       lr: 0.005
-  #     sh_dc:
-  #       lr: 0.005
-  #     sh_rest:
-  #       lr: 0.00025
-  #     ins_rotation:
-  #       lr: 0.00001
-  #       lr_final: 0.000005
-  #     ins_translation:
-  #       lr: 0.0005
-  #       lr_final: 0.0001
-  #     smpl_rotation:
-  #       lr: 0.00005
-  #       lr_final: 0.00001
-  #     w_dc_vox:
-  #       lr: 0.0001
-  #       lr_final: 0.00001
-  #       opt_after: 10000
-  #   ctrl:
-  #     sh_degree: 1
-  #     opacity_init_value: 0.99
-  #     ball_gaussians: false
-  #     constrain_xyz_offset: false
-  #     knn_update_interval: 100
-  #     knn_neighbors: 3
-  #     use_voxel_deformer: true
-  #     freeze_x: false
-  #     freeze_o: false
-  #     freeze_q: false
-  #     freeze_s: false
-  #     freeze_shs_dc: false
-  #     freeze_shs_rest: false
   Sky:
     type: models.modules.EnvLight
     params:
@@ -282,15 +163,24 @@ render:
   render_test: True # whether to render test set
   render_novel: 
     traj_types:
-      - front_center_interp # type of trajectory for novel view synthesis
-    fps: 24 # frames per second for novel view rendering
+    - type: relative_lane_shift
+      direction: x
+      distance: 1.5
+      render_name: lane_shift_left_1.5m
+    - type: relative_lane_shift
+      direction: x
+      distance: 3.0
+      render_name: lane_shift_left_3m
+      # - front_center_interp # type of trajectory for novel view synthesis
+    fps: 10 # frames per second for novel view rendering
   vis_lidar: False # whether to visualize lidar points on ground truth images
   vis_sky: False # whether to include "rgb_sky" and "rgb_sky_blend" in rendered keys
   vis_error: False # whether to include "rgb_error_map" in rendered keys
 
 # ------------- logging ------------ #
 logging:
-  vis_freq: 2000 # how often to visualize training stats
+  vis_freq: 500 # how often to visualize training stats
   print_freq: 500 # how often to print training stats
   saveckpt_freq: 15000 # how often to save checkpoints
   save_seperate_video: True # whether to save seperate videos for each scene
+

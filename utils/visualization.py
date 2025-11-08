@@ -104,33 +104,41 @@ def layout_waymo(
         # left_camera # front_left_camera # front_camera # front_right_camera # right_camera #
         ######################################################################################
     """
+
+    resolution = (600, 960)
     channel = imgs[0].shape[-1]
-    front_cam_idx = cam_names.index('front_camera')
-    front_img = imgs[front_cam_idx]
-    landscape_width, landscape_height = front_img.shape[1], front_img.shape[0]
-    
-    height = landscape_height
-    width = landscape_width * 5
-    tiled_img = np.zeros((height, width, channel), dtype=np.float32)
-    filled_mask = np.zeros((height, width), dtype=np.uint8)
-    
+    landscape_width, landscape_height = resolution[1], resolution[0]
+    # front_cam_idx = cam_names.index('front_camera')
+    # front_img = imgs[front_cam_idx]
+    # landscape_width, landscape_height = front_img.shape[1], front_img.shape[0]
+
+    tiled_height = landscape_height * 2
+    tiled_width = landscape_width * 3
+    tiled_img = np.zeros((tiled_height, tiled_width, channel), dtype=np.float32)
+    filled_mask = np.zeros((tiled_height, tiled_width), dtype=np.uint8)
+    # height = landscape_height
+    # width = landscape_width * 5
+    # tiled_img = np.zeros((height, width, channel), dtype=np.float32)
+    # filled_mask = np.zeros((height, width), dtype=np.uint8)
+
     for idx, cam_name in enumerate(cam_names):
         img = imgs[idx]
-        if cam_name == "left_camera":
-            tiled_img[landscape_height - img.shape[0]:, :landscape_width] = img
-            filled_mask[landscape_height - img.shape[0]:, :landscape_width] = 1
-        elif cam_name == "front_left_camera":
-            tiled_img[:, landscape_width : 2 * landscape_width] = img
-            filled_mask[:, landscape_width : 2 * landscape_width] = 1
+        downsampled_img = cv2.resize(img, (resolution[1], resolution[0]), interpolation=cv2.INTER_CUBIC)
+        if cam_name == "front_left_camera":
+            tiled_img[0:landscape_height, 0:landscape_width] = downsampled_img
+            filled_mask[0:landscape_height, 0:landscape_width] = 1
         elif cam_name == "front_camera":
-            tiled_img[:, 2 * landscape_width : 3 * landscape_width] = img
-            filled_mask[:, 2 * landscape_width : 3 * landscape_width] = 1
+            tiled_img[0:landscape_height, landscape_width:2*landscape_width] = downsampled_img
+            filled_mask[0:landscape_height, landscape_width:2*landscape_width] = 1
         elif cam_name == "front_right_camera":
-            tiled_img[:, 3 * landscape_width : 4 * landscape_width] = img
-            filled_mask[:, 3 * landscape_width : 4 * landscape_width] = 1
+            tiled_img[0:landscape_height, 2*landscape_width:3*landscape_width] = downsampled_img
+            filled_mask[0:landscape_height, 2*landscape_width:3*landscape_width] = 1
+        elif cam_name == "left_camera":
+            tiled_img[landscape_height:2*landscape_height, 0:landscape_width] = downsampled_img
+            filled_mask[landscape_height:2*landscape_height, 0:landscape_width] = 1
         elif cam_name == "right_camera":
-            tiled_img[landscape_height - img.shape[0]:, 4 * landscape_width :] = img
-            filled_mask[landscape_height - img.shape[0]:, 4 * landscape_width :] = 1
+            tiled_img[landscape_height:2*landscape_height, 2*landscape_width:3*landscape_width] = downsampled_img
+            filled_mask[landscape_height:2*landscape_height, 2*landscape_width:3*landscape_width] = 1
     
     # crop the image according to the lagrest filled area
     min_y, max_y = np.where(filled_mask)[0].min(), np.where(filled_mask)[0].max()

@@ -10,9 +10,25 @@ from sklearn.neighbors import NearestNeighbors
 from pytorch3d.transforms import matrix_to_quaternion
 
 from gsplat.rendering import rasterization
-from gsplat.cuda_legacy._wrapper import num_sh_bases
-from gsplat.cuda_legacy._torch_impl import quat_to_rotmat
+# from gsplat.cuda_legacy._wrapper import num_sh_bases
+# from gsplat.cuda_legacy._torch_impl import quat_to_rotmat
+# from gsplat.cuda._wrapper import spherical_harmonics
+from gsplat.utils import normalized_quat_to_rotmat
 from gsplat.cuda._wrapper import spherical_harmonics
+import torch.nn.functional as F
+
+def num_sh_bases(degree: int) -> int:
+    """
+    Returns the number of spherical harmonic bases for a given degree.
+    """
+    MAX_SH_DEGREE = 4
+    assert degree <= MAX_SH_DEGREE, f"We don't support degree greater than {MAX_SH_DEGREE}."
+    return (degree + 1) ** 2
+
+def quat_to_rotmat(quat: torch.Tensor) -> torch.Tensor:
+    assert quat.shape[-1] == 4, quat.shape
+    return normalized_quat_to_rotmat(F.normalize(quat, dim=-1))
+
 
 def interpolate_quats(q1, q2, fraction=0.5):
     q1 = q1 / torch.norm(q1, dim=-1, keepdim=True)

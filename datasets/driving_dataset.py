@@ -17,6 +17,9 @@ from utils.visualization import get_layout
 from utils.geometry import transform_points
 from utils.camera import get_interp_novel_trajectories
 from utils.misc import export_points_to_ply, import_str
+from .novel_view_manager import NovelViewManager
+from .base.data_proto import CameraInfo, ImageInfo
+import open3d as o3d
 
 logger = logging.getLogger()
 
@@ -35,6 +38,7 @@ class DrivingDataset(SceneDataset):
     def __init__(
         self,
         data_cfg: OmegaConf,
+        project_dir = None,
     ) -> None:
         super().__init__(data_cfg)
         
@@ -48,8 +52,7 @@ class DrivingDataset(SceneDataset):
         self.type = self.data_cfg.dataset
         try: # For Waymo, NuScenes, ArgoVerse, PandaSet
             self.data_path = os.path.join(
-                self.data_cfg.data_root,
-                f"{int(self.scene_idx):03d}"
+                self.data_cfg.data_root
             )
         except: # For KITTI, NuPlan
             self.data_path = os.path.join(self.data_cfg.data_root, self.scene_idx)
@@ -78,6 +81,11 @@ class DrivingDataset(SceneDataset):
         self.pixel_source, self.lidar_source = self.build_data_source()
         assert self.pixel_source is not None and self.lidar_source is not None, \
             "Must have both pixel source and lidar source"
+
+        self.project_lidar_pts_get_ground()
+        # self.project_lidar_pts_get_ground(kernel_size=0,save_ply=True,get_road_pts=False)
+        self.get_all_lidar_pts()
+        self.project_alllidar_pts_get_background(kernel_size=0,save_ply=True,get_road_pts=False)
         self.project_lidar_pts_on_images(
             delete_out_of_view_points=True
         )
@@ -99,7 +107,14 @@ class DrivingDataset(SceneDataset):
         # debug use
         # self.seg_dynamic_instances_in_lidar_frame(-1, frame_idx=0)
         # self.get_init_objects()
-        
+
+        # ---- create novel view manager ---- #
+        self.project_dir = project_dir
+        self.debug_mode = True
+        self.novel_view_manager = NovelViewManager(
+            os.path.join(self.project_dir, "novel_view_data"), debug_mode=self.debug_mode
+        )
+
     @property
     def instance_num(self):
         return len(self.pixel_source.instances_pose[0])
@@ -183,7 +198,7 @@ class DrivingDataset(SceneDataset):
             "Must provide either num_samples or downsample_factor, but not both"
         if downsample_factor is not None:
             num_samples = int(len(self.lidar_source.pts_xyz) / downsample_factor)
-        if num_samples > len(self.lidar_source.pts_xyz):
+        if (num_samples > len(self.lidar_source.pts_xyz)) or (num_samples <= 0):
             logger.warning(f"num_samples {num_samples} is larger than the number of points {len(self.lidar_source.pts_xyz)}")
             num_samples = len(self.lidar_source.pts_xyz)
         
@@ -202,7 +217,55 @@ class DrivingDataset(SceneDataset):
             sampled_time = sampled_time[..., None]
         
         return sampled_pts, sampled_color, sampled_time
-    
+
+    def get_lidar_samples_from_ply(
+        self,
+        num_samples: float = None,
+        downsample_factor: float = None,
+        return_color=False,
+        return_normalized_time=False,
+        is_ground_ply=True,
+        device: torch.device = torch.device("cpu")
+        ) -> Tensor:
+        if not is_ground_ply:
+            assert (num_samples is None) != (downsample_factor is None), \
+                "Must provide either num_samples or downsample_factor, but not both"
+        lidar_pts_xyzs = None
+        lidar_pts_colors = None
+
+        num_frame = len(self.pixel_source.camera_data[0])
+        num_cams = len(self.pixel_source.camera_data)
+        if is_ground_ply:
+            pcd_path = os.path.join(self.pixel_source.camera_data[0].data_path, f"{num_cams}V_{num_frame}Frame_ground_pts.ply")
+            # pcd_path = os.path.join(self.pixel_source.camera_data[0].data_path, f"densify_ground_{num_cams}V", f"points3D_ground_sr_bd_0.3.ply")
+        else:
+            pcd_path = os.path.join(self.pixel_source.camera_data[0].data_path, f"{num_cams}V_{num_frame}Frame_all_background_pts.ply")
+        loaded_pcd = o3d.io.read_point_cloud(pcd_path)
+        lidar_pts_xyzs = torch.tensor(loaded_pcd.points, dtype=torch.float32)
+        lidar_pts_colors = torch.tensor(loaded_pcd.colors, dtype=torch.float32)
+        # import pdb; pdb.set_trace()
+        if is_ground_ply:
+            return lidar_pts_xyzs.to(device), lidar_pts_colors.to(device), None
+
+        if downsample_factor is not None:
+            num_samples = int(len(lidar_pts_xyzs) / downsample_factor)
+        if (num_samples > len(lidar_pts_xyzs)) or (num_samples <= 0):
+            logger.warning(f"num_samples {num_samples} is larger than the number of points {len(lidar_pts_xyzs)}")
+            num_samples = len(lidar_pts_xyzs)
+
+        # randomly sample points
+        sampled_idx = torch.randperm(len(lidar_pts_xyzs))[:num_samples]
+        sampled_pts = lidar_pts_xyzs[sampled_idx].to(device)
+
+        # get color if needed
+        sampled_color = None
+        if return_color:
+            sampled_color = lidar_pts_colors[sampled_idx].to(device)
+
+        sampled_time = None
+        return sampled_pts, sampled_color, sampled_time
+
+
     def seg_dynamic_instances_in_lidar_frame(
         self,
         instance_ids: Union[int, list],
@@ -704,10 +767,261 @@ class DrivingDataset(SceneDataset):
             
         if delete_out_of_view_points:
             self.lidar_source.delete_invisible_pts()
-            
+
+
+
+    def get_all_lidar_pts(self):
+        num_cams = len(self.pixel_source.camera_data)
+        num_frame = len(self.pixel_source.camera_data[0])
+        target_ply_path = os.path.join(self.pixel_source.camera_data[0].data_path, f"{num_cams}V_{num_frame}Frame_all_pts.ply")
+        if os.path.exists(target_ply_path):
+            print(f"skip get_all_lidar_pts. Exist {target_ply_path}")
+            # import pdb; pdb.set_trace()
+            return
+
+        all_road_pts = []
+        all_road_masks = []
+        all_road_pts_colors = []
+        for frame_idx in tqdm(
+            range(num_frame), desc="get ground lidar", dynamic_ncols=True
+        ):
+            normed_time = self.pixel_source.normalized_time[frame_idx]
+            # get lidar depth on image plane
+            closest_lidar_idx = self.lidar_source.find_closest_timestep(normed_time)
+            lidar_infos = self.lidar_source.get_lidar_rays(closest_lidar_idx)
+            lidar_points = (
+                lidar_infos["lidar_origins"]
+                + lidar_infos["lidar_viewdirs"] * lidar_infos["lidar_ranges"]
+            )
+            all_road_pts.append(lidar_points)
+
+        merged_pts_tensor = (torch.cat(all_road_pts, dim=0)).cpu().numpy()
+        save_pcd = o3d.geometry.PointCloud()
+        save_pcd.points = o3d.utility.Vector3dVector(merged_pts_tensor)
+        num_cams = len(self.pixel_source.camera_data)
+        o3d.io.write_point_cloud(os.path.join(self.pixel_source.camera_data[0].data_path, f"{num_cams}V_{num_frame}Frame_all_pts.ply"), save_pcd)
+        return
+
+ 
+    def project_alllidar_pts_get_background(self, kernel_size=6, save_ply=True, get_road_pts=True):
+        num_frame = len(self.pixel_source.camera_data[0])
+        num_cams = len(self.pixel_source.camera_data)
+        if get_road_pts:
+            target_ply_path = os.path.join(self.pixel_source.camera_data[0].data_path, f"{num_cams}V_{num_frame}Frame_all_ground_pts.ply")
+        else:
+            target_ply_path = os.path.join(self.pixel_source.camera_data[0].data_path, f"{num_cams}V_{num_frame}Frame_all_background_pts.ply")
+        if os.path.exists(target_ply_path):
+            print(f"skip project_lidar_pts get_ground. Exist {target_ply_path}")
+            # import pdb; pdb.set_trace()
+            return
+        pcd_path = os.path.join(self.pixel_source.camera_data[0].data_path, f"{num_cams}V_{num_frame}Frame_all_pts.ply")
+        loaded_pcd = o3d.io.read_point_cloud(pcd_path)
+        lidar_points = torch.tensor(loaded_pcd.points, dtype=torch.float32).to(self.device)
+        lidar_road_mask = torch.zeros(lidar_points.shape[0], dtype=torch.bool).to(self.device)
+        rgb_labels = torch.zeros(lidar_points.shape[0], 3, dtype=torch.float32).to(self.device)
+
+        all_road_masks = []
+        for frame_idx in tqdm(
+            range(num_frame), desc="get ground lidar", dynamic_ncols=True
+        ):
+            for cam in self.pixel_source.camera_data.values():
+                if cam.undistort:
+                    new_camera_matrix, _ = cv2.getOptimalNewCameraMatrix(
+                                cam.intrinsics[frame_idx].cpu().numpy(),
+                                cam.distortions[frame_idx].cpu().numpy(),
+                                (cam.WIDTH, cam.HEIGHT),
+                                alpha=1,
+                            )
+                    intrinsic_4x4 = torch.nn.functional.pad(
+                            torch.from_numpy(new_camera_matrix), (0, 1, 0, 1)
+                        ).to(self.device)
+                else:
+                    intrinsic_4x4 = torch.nn.functional.pad(
+                        cam.intrinsics[frame_idx], (0, 1, 0, 1)
+                    )
+                intrinsic_4x4[3, 3] = 1.0
+                lidar2img = intrinsic_4x4 @ cam.cam_to_worlds[frame_idx].inverse()
+                lidar_points_img = (
+                    lidar2img[:3, :3] @ lidar_points.T + lidar2img[:3, 3:4]
+                ).T # (num_pts, 3)
+                depth = lidar_points_img[:, 2]
+                cam_points = lidar_points_img[:, :2] / (depth.unsqueeze(-1) + 1e-6) # (num_pts, 2)
+                view_valid_mask = (
+                    (cam_points[:, 0] >= 0)
+                    & (cam_points[:, 0] < cam.WIDTH)
+                    & (cam_points[:, 1] >= 0)
+                    & (cam_points[:, 1] < cam.HEIGHT)
+                    & (depth > 0)
+                )
+                image = cam.images[frame_idx]
+                road_mask = cam.road_masks[frame_idx]
+                if kernel_size > 0:
+                    road_mask_np = road_mask.cpu().numpy()
+                    road_mask_8u = (road_mask_np * 255).astype(np.uint8)
+                    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (kernel_size, kernel_size))
+                    eroded_mask_8u = cv2.erode(road_mask_8u, kernel, iterations=1)
+                    eroded_mask_np = eroded_mask_8u / 255.0  # 255→1.0，0→0.0
+                    eroded_mask = torch.tensor(eroded_mask_np, dtype=road_mask.dtype, device=road_mask.device)
+                    road_mask = eroded_mask
+                u_indices = torch.round(cam_points[:, 0]).long()
+                v_indices = torch.round(cam_points[:, 1]).long()
+                H, W = road_mask.shape
+                valid_mask = (u_indices >= 0) & (u_indices < W) & (v_indices >= 0) & (v_indices < H) & (depth > 0)
+                labels = torch.zeros(cam_points.shape[0], dtype=torch.float32, device=self.device)  # 初始化标签为0
+                labels[valid_mask] = road_mask[v_indices[valid_mask], u_indices[valid_mask]]
+                rgb_labels[valid_mask] = image[v_indices[valid_mask], u_indices[valid_mask]]
+                labels[~valid_mask] = -1
+                cur_valid_mask = view_valid_mask & (labels==1)
+                lidar_road_mask = lidar_road_mask | cur_valid_mask
+
+        if not get_road_pts:
+            lidar_road_mask = ~lidar_road_mask
+        merged_pts_tensor = lidar_points[lidar_road_mask].cpu()
+        merged_colors_tensor = rgb_labels[lidar_road_mask].cpu()
+        if save_ply:
+            save_pcd = o3d.geometry.PointCloud()
+            save_pcd.points = o3d.utility.Vector3dVector(merged_pts_tensor)
+            save_pcd.colors = o3d.utility.Vector3dVector(merged_colors_tensor)
+            num_cams = len(self.pixel_source.camera_data)
+            if get_road_pts:
+                o3d.io.write_point_cloud(os.path.join(cam.data_path, f"{num_cams}V_{num_frame}Frame_all_ground_pts.ply"), save_pcd)
+            else:
+                o3d.io.write_point_cloud(os.path.join(cam.data_path, f"{num_cams}V_{num_frame}Frame_all_background_pts.ply"), save_pcd)
+        return
+
+    def project_lidar_pts_get_ground(self, kernel_size=6, save_ply=True, get_road_pts=True):
+        num_cams = len(self.pixel_source.camera_data)
+        num_frame = len(self.pixel_source.camera_data[0])
+        if get_road_pts:
+            target_ply_path = os.path.join(self.pixel_source.camera_data[0].data_path, f"{num_cams}V_{num_frame}Frame_ground_pts.ply")
+        else:
+            target_ply_path = os.path.join(self.pixel_source.camera_data[0].data_path, f"{num_cams}V_{num_frame}Frame_background_pts.ply")
+        if os.path.exists(target_ply_path):
+            print(f"skip project_lidar_pts get_ground. Exist {target_ply_path}")
+            # import pdb; pdb.set_trace()
+            return
+
+        all_road_pts = []
+        all_road_masks = []
+        all_road_pts_colors = []
+        for frame_idx in tqdm(
+            range(num_frame), desc="get ground lidar", dynamic_ncols=True
+        ):
+            normed_time = self.pixel_source.normalized_time[frame_idx]
+            # get lidar depth on image plane
+            closest_lidar_idx = self.lidar_source.find_closest_timestep(normed_time)
+            lidar_infos = self.lidar_source.get_lidar_rays(closest_lidar_idx)
+            lidar_points = (
+                lidar_infos["lidar_origins"]
+                + lidar_infos["lidar_viewdirs"] * lidar_infos["lidar_ranges"]
+            )
+            lidar_road_mask = torch.zeros(lidar_points.shape[0], dtype=torch.bool).to(self.device)
+            rgb_labels = torch.zeros(lidar_points.shape[0], 3, dtype=torch.float32).to(self.device)
+
+            for cam in self.pixel_source.camera_data.values():
+                lidar_depth_maps = []
+                # project lidar points to the image plane
+                if cam.undistort:
+                    new_camera_matrix, _ = cv2.getOptimalNewCameraMatrix(
+                                cam.intrinsics[frame_idx].cpu().numpy(),
+                                cam.distortions[frame_idx].cpu().numpy(),
+                                (cam.WIDTH, cam.HEIGHT),
+                                alpha=1,
+                            )
+                    intrinsic_4x4 = torch.nn.functional.pad(
+                            torch.from_numpy(new_camera_matrix), (0, 1, 0, 1)
+                        ).to(self.device)
+                else:
+                    intrinsic_4x4 = torch.nn.functional.pad(
+                        cam.intrinsics[frame_idx], (0, 1, 0, 1)
+                    )
+                intrinsic_4x4[3, 3] = 1.0
+                lidar2img = intrinsic_4x4 @ cam.cam_to_worlds[frame_idx].inverse()
+                lidar_points_img = (
+                    lidar2img[:3, :3] @ lidar_points.T + lidar2img[:3, 3:4]
+                ).T # (num_pts, 3)
+                depth = lidar_points_img[:, 2]
+                cam_points = lidar_points_img[:, :2] / (depth.unsqueeze(-1) + 1e-6) # (num_pts, 2)
+                view_valid_mask = (
+                    (cam_points[:, 0] >= 0)
+                    & (cam_points[:, 0] < cam.WIDTH)
+                    & (cam_points[:, 1] >= 0)
+                    & (cam_points[:, 1] < cam.HEIGHT)
+                    & (depth > 0)
+                )
+                image = cam.images[frame_idx]
+                # get road mask
+                road_mask = cam.road_masks[frame_idx]
+                # if False:
+                if kernel_size > 0:
+                    # import pdb; pdb.set_trace()
+                    road_mask_np = road_mask.cpu().numpy()
+                    road_mask_8u = (road_mask_np * 255).astype(np.uint8)
+                    # kernel_size = 6
+                    # kernel_size = 14
+                    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (kernel_size, kernel_size))
+                    eroded_mask_8u = cv2.erode(road_mask_8u, kernel, iterations=1)
+                    eroded_mask_np = eroded_mask_8u / 255.0  # 255→1.0，0→0.0
+                    eroded_mask = torch.tensor(eroded_mask_np, dtype=road_mask.dtype, device=road_mask.device)
+                    print("road_mask : ", (road_mask > 0.5).sum().item())
+                    print("eroded_mask : ", (eroded_mask > 0.5).sum().item())
+                    # cv2.imwrite(f"{cam.cam_id}_{frame_idx}_eroded_road_mask.png", eroded_mask_8u)
+                    # cv2.imwrite("road_mask_8u.png", road_mask_8u)
+                    road_mask = eroded_mask
+                u_indices = torch.round(cam_points[:, 0]).long()
+                v_indices = torch.round(cam_points[:, 1]).long()
+                H, W = road_mask.shape
+                valid_mask = (u_indices >= 0) & (u_indices < W) & (v_indices >= 0) & (v_indices < H) & (depth > 0)
+                labels = torch.zeros(cam_points.shape[0], dtype=torch.float32, device=self.device)  # 初始化标签为0
+                labels[valid_mask] = road_mask[v_indices[valid_mask], u_indices[valid_mask]]
+                rgb_labels[valid_mask] = image[v_indices[valid_mask], u_indices[valid_mask]]
+                labels[~valid_mask] = -1
+                cur_valid_mask = view_valid_mask & (labels==1)
+                lidar_road_mask = lidar_road_mask | cur_valid_mask
+                # road_lidar_pts = lidar_points[lidar_road_mask]
+                # road_lidar_pts = lidar_points[view_valid_mask]
+                # save_pcd = o3d.geometry.PointCloud()
+                # save_pcd.points = o3d.utility.Vector3dVector(road_lidar_pts.cpu().numpy())
+                # os.makedirs("road_lidar_ply", exist_ok=True)
+                # o3d.io.write_point_cloud(os.path.join("road_lidar_ply", f"{frame_idx:03d}_{cam.cam_id}_roadlidar.ply"), save_pcd)
+                # import pdb; pdb.set_trace()
+
+            # save road lidar
+            if not get_road_pts:
+                lidar_road_mask = ~lidar_road_mask
+            road_lidar_pts = lidar_points[lidar_road_mask]
+            road_lidar_colors = rgb_labels[lidar_road_mask]
+
+            all_road_pts.append(road_lidar_pts)
+            all_road_pts_colors.append(road_lidar_colors)
+            if save_ply:
+                save_pcd = o3d.geometry.PointCloud()
+                save_pcd.points = o3d.utility.Vector3dVector(road_lidar_pts.cpu().numpy())
+                save_pcd.colors = o3d.utility.Vector3dVector(road_lidar_colors.cpu().numpy())
+                if get_road_pts:
+                    road_lidar_save_path = os.path.join(cam.data_path, "road_lidar_ply")
+                else:
+                    road_lidar_save_path = os.path.join(cam.data_path, "notroad_lidar_ply")
+                os.makedirs(road_lidar_save_path, exist_ok=True)
+                o3d.io.write_point_cloud(os.path.join(road_lidar_save_path, f"{frame_idx:03d}.ply"), save_pcd)
+
+        merged_pts_tensor = (torch.cat(all_road_pts, dim=0)).cpu().numpy()
+        merged_colors_tensor = (torch.cat(all_road_pts_colors, dim=0)).cpu().numpy()
+        if save_ply:
+            save_pcd = o3d.geometry.PointCloud()
+            save_pcd.points = o3d.utility.Vector3dVector(merged_pts_tensor)
+            save_pcd.colors = o3d.utility.Vector3dVector(merged_colors_tensor)
+            num_cams = len(self.pixel_source.camera_data)
+            if get_road_pts:
+                o3d.io.write_point_cloud(os.path.join(cam.data_path, f"{num_cams}V_{num_frame}Frame_ground_pts.ply"), save_pcd)
+            else:
+                o3d.io.write_point_cloud(os.path.join(cam.data_path, f"{num_cams}V_{num_frame}Frame_background_pts.ply"), save_pcd)
+        # import pdb; pdb.set_trace()
+        return
+
     def get_novel_render_traj(
         self,
-        traj_types: List[str] = ["front_center_interp"],
+        traj_types: List[dict],
         target_frames: int = 100
     ) -> Dict[str, torch.Tensor]:
         """
@@ -727,22 +1041,36 @@ class DrivingDataset(SceneDataset):
             are the generated novel trajectories, each of shape (target_frames, 4, 4)
         """
         per_cam_poses = {}
+
+        cam2ego = {}
+        ego2worlds = {}
+        cam_ids = []
+        cam_names = []
+
         for cam_id in self.pixel_source.camera_list:
+            # if cam_id != 0:
+            #     continue
             per_cam_poses[cam_id] = self.pixel_source.camera_data[cam_id].cam_to_worlds
-        
+            cam2ego[cam_id] = self.pixel_source.camera_data[cam_id].cam_to_ego
+            ego2worlds[cam_id] = self.pixel_source.camera_data[cam_id].ego_to_worlds
+            for _ in range(len(self.pixel_source.camera_data[cam_id].images)):
+                cam_ids.append(cam_id)
+                cam_names.append(self.pixel_source.camera_data[cam_id].cam_name)
+
         novel_trajs = {}
         for traj_type in traj_types:
-            novel_trajs[traj_type] = get_interp_novel_trajectories(
+            novel_trajs[traj_type.render_name] = get_interp_novel_trajectories(
                 self.type,
-                self.scene_idx,
                 per_cam_poses,
                 traj_type,
-                target_frames
+                target_frames,
+                cam2ego,
+                ego2worlds,
             )
-        
-        return novel_trajs
+        return novel_trajs, cam_ids, cam_names
 
-    def prepare_novel_view_render_data(self, traj: torch.Tensor) -> list:
+
+    def prepare_novel_view_render_data(self, traj: torch.Tensor, cam_ids, cam_names) -> list:
             """
             Prepare all necessary elements for novel view rendering.
 
@@ -755,4 +1083,63 @@ class DrivingDataset(SceneDataset):
                     - image_infos: Image-related information (indices, normalized time, viewdirs, etc.)
             """
             # Call the PixelSource's method
-            return self.pixel_source.prepare_novel_view_render_data(self.type, traj)
+            return self.pixel_source.prepare_novel_view_render_data(self.type, traj, cam_ids, cam_names)
+    
+
+    # 
+    # def load_novel_view_data(
+    #     self, idx: int, base_image_info: ImageInfo, base_cam_info: CameraInfo
+    # ) -> Tuple[Optional[ImageInfo], Optional[CameraInfo]]:
+    #     image_info, cam_info = self.novel_view_manager.load_novel_view_data(
+    #         idx, base_image_info, base_cam_info, device=self.device
+    #     )
+    #     return image_info, cam_info
+
+    def save_novel_view_data(
+        self,
+        image_index: int,
+        shift_value_name: str,
+        novel_view_cam_extrinsic: torch.Tensor,
+        novel_view_render_image: torch.Tensor,
+        novel_view_render_fix_image: torch.Tensor,
+        novel_view_sky_mask: torch.Tensor,
+    ) -> None:
+        self.novel_view_manager.save_novel_view_data(
+            image_index,
+            shift_value_name,
+            novel_view_cam_extrinsic,
+            novel_view_render_image=novel_view_render_image,
+            novel_view_render_fix_image=novel_view_render_fix_image,
+            novel_view_sky_mask=novel_view_sky_mask,
+        )
+        # self.novel_view_manager.update_state(
+        #     image_index=image_index,
+        #     shift_value_name=shift_value_name,
+        #     new_state="ready",
+        # )
+
+    def exist_novel_view_data(self, image_index: int, shift_value_name: str) -> bool:
+        flag = self.novel_view_manager.exist_novel_view_data(image_index, shift_value_name)
+        return flag
+
+    def push_img_cam_infos(self, image_index: int, shift_value_name: str, state, c2w, nv_img_info = None, nv_cam_info = None) -> None:
+        self.novel_view_manager.push_img_cam_infos(image_index, shift_value_name, state, c2w, nv_img_info, nv_cam_info)
+
+    def load_novel_view_data(
+        self,
+        image_index: int,
+        shift_value_name: str,
+        image_infos: Dict[str, torch.Tensor],
+        cam_infos: Dict[str, torch.Tensor],
+        device=None
+    ):
+        if device is None:
+            device = self.device
+        image_info, cam_info = self.novel_view_manager.load_novel_view_data(
+            image_index, shift_value_name,
+            image_infos, cam_infos, device=device
+        )
+        return image_info, cam_info
+
+    def get_img_cam_infos(self,  image_index: int, shift_value_name: str):
+        return self.novel_view_manager.get_img_cam_infos(image_index, shift_value_name)

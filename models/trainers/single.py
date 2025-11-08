@@ -197,9 +197,10 @@ class SingleTrainer(BasicTrainer):
         outputs: Dict[str, torch.Tensor],
         image_infos: Dict[str, torch.Tensor],
         cam_infos: Dict[str, torch.Tensor],
+        from_synthesis: bool = False,
     ) -> Dict[str, torch.Tensor]:
-        loss_dict = super().compute_losses(outputs, image_infos, cam_infos)
-        
+        loss_dict = super().compute_losses(outputs, image_infos, cam_infos, from_synthesis)
+
         return loss_dict
     
     def compute_metrics(

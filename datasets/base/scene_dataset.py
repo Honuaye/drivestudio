@@ -87,9 +87,9 @@ class SceneDataset(abc.ABC):
     def num_cams(self) -> int:
         return self.pixel_source.num_cams
 
-    @property
-    def scene_idx(self) -> int:
-        return self.data_cfg.scene_idx
+    # @property
+    # def scene_idx(self) -> int:
+    #     return self.data_cfg.scene_idx
 
     @property
     def num_img_timesteps(self) -> int:

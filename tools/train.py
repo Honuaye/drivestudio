@@ -15,6 +15,9 @@ from utils.backup import backup_project
 from utils.logging import MetricLogger, setup_logging
 from models.video_utils import render_images, save_videos
 from datasets.driving_dataset import DrivingDataset
+from datasets.base.data_proto import CameraInfo, ImageInfo, Rays, ImageMasks
+from models.sd_pipeline.generative_pipeline import GenerativeReconTrainer
+
 
 logger = logging.getLogger()
 current_time = time.strftime("%Y-%m-%d_%H-%M-%S", time.localtime())
@@ -103,12 +106,115 @@ def setup(args):
     )
     return cfg
 
+def transformation_struct(image_infos, cam_infos):
+    origins = image_infos["origins"]
+    viewdirs = image_infos["viewdirs"]
+    direction_norm = image_infos["direction_norm"]
+    pixel_coords = image_infos["pixel_coords"]
+    normed_time = image_infos["normed_time"]
+    img_idx = image_infos["img_idx"]
+    frame_idx = image_infos["frame_idx"]
+    rgb = image_infos["pixels"]
+    sky_mask = image_infos["sky_masks"]
+    dynamic_mask = image_infos["dynamic_masks"]
+    human_mask = image_infos["human_masks"]
+    vehicle_mask = image_infos["vehicle_masks"]
+    egocar_mask = image_infos["egocar_masks"]
+    lidar_depth_map = image_infos["lidar_depth_map"]
+    normalized_time = image_infos["normalized_time"]
+    unique_img_idx = image_infos["unique_img_idx"]
+    sd_image_info = ImageInfo(
+        rays=Rays(origins, viewdirs, direction_norm),
+        pixels=rgb,
+        depth_map=lidar_depth_map,
+        masks=ImageMasks(sky_mask, dynamic_mask, human_mask, vehicle_mask, egocar_mask),
+        pixel_coords=pixel_coords,
+        normalized_time=normalized_time,
+        image_index=unique_img_idx,
+        frame_index=torch.tensor(frame_idx),
+    )
+    cam_id = cam_infos["cam_id"]
+    cam_name = cam_infos["cam_name"]
+    camera_to_world = cam_infos["camera_to_world"]
+    height = cam_infos["height"]
+    width = cam_infos["width"]
+    intrinsics = cam_infos["intrinsics"]
+    ego_to_world = cam_infos["ego_to_world"]
+    cam_to_ego = cam_infos["cam_to_ego"]
+    sd_camera_info = CameraInfo(
+        camera_id=cam_id,
+        camera_name=cam_name,
+        intrinsic=intrinsics,
+        camera_to_world=camera_to_world, # Twc
+        ego_to_world=ego_to_world, # Tw_ego
+        camera_to_ego=cam_to_ego, # Extrinsic, Tego_c
+        height=height,
+        width=width
+    )
+    return sd_image_info, sd_camera_info
+
+def reverse_transformation_struct(sd_image_info, sd_camera_info):
+    image_infos = {
+        "origins": sd_image_info.rays.origins,
+        "viewdirs": sd_image_info.rays.viewdirs,
+        "direction_norm": sd_image_info.rays.direction_norm,
+        "pixel_coords": sd_image_info.pixel_coords,
+        "normed_time": sd_image_info.normalized_time,
+        "img_idx": sd_image_info.image_index,
+        "frame_idx": sd_image_info.frame_index,
+        "pixels": sd_image_info.pixels,
+        "sky_masks": sd_image_info.masks.sky_mask,
+        "dynamic_masks": sd_image_info.masks.dynamic_mask,
+        "human_masks": sd_image_info.masks.human_mask,
+        "vehicle_masks": sd_image_info.masks.vehicle_mask,
+        "egocar_masks": sd_image_info.masks.egocar_mask,
+        "lidar_depth_map": sd_image_info.depth_map,
+        "normalized_time": sd_image_info.normalized_time,
+        "unique_img_idx": sd_image_info.image_index
+    }
+    cam_infos = {
+        "cam_id": sd_camera_info.camera_id,
+        "cam_name": sd_camera_info.camera_name,
+        "camera_to_world": sd_camera_info.camera_to_world,
+        "height": sd_camera_info.height,
+        "width": sd_camera_info.width,
+        "intrinsics": sd_camera_info.intrinsic,
+        "ego_to_world": sd_camera_info.ego_to_world,
+        "cam_to_ego": sd_camera_info.camera_to_ego
+    }
+    return image_infos, cam_infos
+
+# def _prepare_generative_engine_inference_data(shift):
+
 def main(args):
     cfg = setup(args)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    cfg.project_dir = cfg.log_dir
 
     # build dataset
-    dataset = DrivingDataset(data_cfg=cfg.data)
+    dataset = DrivingDataset(data_cfg=cfg.data, project_dir=cfg.project_dir)
+
+    # adapt sd pipeline
+    use_model_parallel = False
+    if "multi_gpu" in cfg:
+        use_model_parallel = cfg.multi_gpu.get(use_model_parallel, True)
+    if use_model_parallel:
+        device_recon = torch.device("cuda:0")
+        device_gen = torch.device("cuda:1")
+        device = device_recon
+    else:
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        device_recon = device
+        device_gen = device
+    # sd_pipeline_flag = True
+    sd_pipeline_flag = cfg.get("sd_pipeline_flag", False)
+    if sd_pipeline_flag:
+        generative_recon_pipeline = GenerativeReconTrainer(
+                cfg=cfg,
+                devices=[device_recon, device_gen],
+                num_train_images=len(dataset.train_image_set),
+            )
+    # import pdb; pdb.set_trace()
 
     # setup trainer
     trainer = import_str(cfg.trainer.type)(
@@ -147,6 +253,7 @@ def main(args):
         "gt_rgbs",
         "rgbs",
         "Background_rgbs",
+        "Ground_rgbs",
         "Dynamic_rgbs",
         "RigidNodes_rgbs",
         "DeformableNodes_rgbs",
@@ -242,6 +349,26 @@ def main(args):
         trainer.set_train()
         trainer.preprocess_per_train_step(step=step)
         trainer.optimizer_zero_grad() # zero grad
+        tmp_print = False
+        if sd_pipeline_flag:
+            generative_recon_pipeline.run_before_train_step(step)
+            if generative_recon_pipeline.generative_scheduler.num_novel_data > 0:
+                # import pdb; pdb.set_trace()
+                de_img, ref_image, ref_sky_mask, ref_c2w, index, shift_value_name = generative_recon_pipeline.generative_scheduler.get_novel_data()
+                from einops import rearrange
+                ref_image = rearrange(ref_image, "c h w -> h w c")
+                de_img = rearrange(de_img, "c h w -> h w c")
+                # shift_value_name 可能是个 BUG 
+                old_shift_value_name = f"{generative_recon_pipeline.delta_shift * generative_recon_pipeline.current_shift_level:.1f}"
+                # import pdb; pdb.set_trace()
+                dataset.save_novel_view_data(
+                    index,
+                    shift_value_name,
+                    novel_view_cam_extrinsic=ref_c2w,
+                    novel_view_render_image=de_img,
+                    novel_view_render_fix_image=ref_image,
+                    novel_view_sky_mask=ref_sky_mask,
+                )
         
         # get data
         train_step_camera_downscale = trainer._get_downscale_factor()
@@ -262,6 +389,51 @@ def main(args):
             image_infos=image_infos,
             cam_infos=cam_infos,
         )
+
+        if sd_pipeline_flag:
+            # image_infos = image_infos.image_index.item()
+            index = image_infos["img_idx"][0,0].item()
+            shift_value_name = f"{generative_recon_pipeline.delta_shift * generative_recon_pipeline.current_shift_level:.1f}"
+            if tmp_print :
+                print(
+                    "step = ", step,
+                    '\t in-Forward = ',
+                    "\t shift_value_name = ", shift_value_name,
+                    "\t delta_shift = ", generative_recon_pipeline.delta_shift,
+                    "\t current_shift_level = ", generative_recon_pipeline.current_shift_level,
+                    "\t images_index = ", index,
+                )
+
+            if (step > cfg.joint_training_cfg.start_engine_infer_at) and dataset.exist_novel_view_data(index, shift_value_name):
+                nv_image_infos, nv_cam_infos = dataset.load_novel_view_data(index, shift_value_name, image_infos, cam_infos, device_recon)
+                # import pdb; pdb.set_trace()
+                nv_infos = dataset.get_img_cam_infos(index, shift_value_name)
+                nv_infos_flag = False
+                if (nv_image_infos is not None) and (nv_cam_infos is not None):
+                    nv_infos_flag = True
+                    # nv_image_infos = image_infos
+                    # nv_cam_infos = cam_infos
+                    # nv_cam_infos["camera_to_world"] = nv_infos['c2w']
+                    # if True:
+                    #     import pdb; pdb.set_trace()
+
+                    # nv_cam_infos["camera_to_world"] 存放在 cpu 上的； 有影响吗
+                    nv_outputs = trainer(nv_image_infos, nv_cam_infos)
+                    trainer.update_visibility_filter()
+                    novel_view_loss_dict = trainer.compute_losses(
+                        outputs=nv_outputs,
+                        image_infos=nv_image_infos,
+                        cam_infos=nv_cam_infos,
+                        from_synthesis=True,
+                    )
+                    del nv_image_infos, nv_cam_infos
+                    for k, v in novel_view_loss_dict.items():
+                        if k not in loss_dict:
+                            loss_dict[k] = 0
+                        loss_dict[k] += v
+                if tmp_print :
+                    print('index = ', index, "\t shift_value_name = ", shift_value_name, "\t nv_infos_flag = ", nv_infos_flag)
+
         # check nan or inf
         for k, v in loss_dict.items():
             if torch.isnan(v).any():
@@ -273,6 +445,69 @@ def main(args):
         # after training step
         trainer.postprocess_per_train_step(step=step)
         
+
+        if sd_pipeline_flag:
+            sd_train_data = transformation_struct(image_infos, cam_infos)
+            get_nvs_render = generative_recon_pipeline.run_after_train_step(step, sd_train_data, outputs, loss_dict)
+            # if get_nvs_render or (step % 50 == 0):
+            if get_nvs_render:
+                image_info, cam_info = sd_train_data
+                image_index = image_info.image_index.item()
+                if image_info.masks.egocar_mask is not None:
+                    egocar_mask = 1.0 - image_info.masks.egocar_mask # 为啥 1.0 减法啊
+                else:
+                    egocar_mask = torch.ones(image_info.pixels.shape[:2], device=image_info.pixels.device)
+
+                shift = generative_recon_pipeline.delta_shift * generative_recon_pipeline.current_shift_level
+                if tmp_print :
+                    print(
+                        "step = ", step,
+                        '\t in-run_after_train::prepare_sd_repair_imgs = ',
+                        "\t shift = ", shift,
+                        "\t delta_shift = ", generative_recon_pipeline.delta_shift,
+                        "\t current_shift_level = ", generative_recon_pipeline.current_shift_level,
+                        "\t image_index = ", image_index,
+                    )
+
+                if (shift > 0.0) and (not dataset.exist_novel_view_data(image_index, f"{shift:.1f}")):
+                    # clone camera info and adjust pose
+                    novel_view_cam_info = cam_info.detach().copy()
+                    cam_to_ego = novel_view_cam_info.camera_to_ego.clone()
+                    cam_to_ego[1, 3] += shift
+                    ego_to_world = novel_view_cam_info.ego_to_world
+                    c2w = ego_to_world @ cam_to_ego
+                    c2w_recon_d = c2w.to(device_recon)
+
+                    # move camera info to device_recon
+                    novel_view_cam_info.camera_to_world = c2w_recon_d
+                    novel_view_cam_info = novel_view_cam_info.to(device_recon)
+                    image_info = image_info.to(device_recon)
+                    # 只改了相机信息，没改动图像
+                    nv_img_info, nv_cam_info = reverse_transformation_struct(image_info, novel_view_cam_info)
+                    trainer.set_eval()
+                    with torch.no_grad():
+                        nv_outputs = trainer(nv_img_info, nv_cam_info)
+                        # TODO :  save novel_view_cam_info  
+                        generative_recon_pipeline._prepare_generative_engine_inference_data(
+                            index=image_index,
+                            shift=f"{shift:.1f}",
+                            results=nv_outputs,
+                            c2w=c2w,
+                            valid_mask=egocar_mask,
+                        )
+                        dataset.push_img_cam_infos(
+                            image_index=image_index,
+                            shift_value_name=f"{shift:.1f}",
+                            state="seed",
+                            c2w=c2w_recon_d,
+                            nv_img_info=None,
+                            nv_cam_info=None,
+                        )
+                        del image_info, novel_view_cam_info
+                        del nv_img_info, nv_cam_info
+                        del nv_outputs
+                        del c2w
+
         #----------------------------------------------------------------------------
         #-------------------------------  logging  ----------------------------------
         with torch.no_grad():

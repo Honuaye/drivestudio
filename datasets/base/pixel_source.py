@@ -122,7 +122,10 @@ class CameraData(object):
         self.undistort = undistort
         self.buffer_downscale = buffer_downscale
         self.device = device
-        
+
+        self.ego_to_worlds = None
+        self.cam_to_ego = None
+
         self.cam_name = DATASETS_CONFIG[dataset_name][cam_id]["camera_name"]
         self.original_size = DATASETS_CONFIG[dataset_name][cam_id]["original_size"]
         self.load_size = [
@@ -139,6 +142,7 @@ class CameraData(object):
             self.load_dynamic_masks()
         if load_sky_mask:
             self.load_sky_masks()
+        self.load_road_masks()
         self.lidar_depth_maps = None # will be loaded by: self.load_depth()
         self.image_error_maps = None # will be built by: self.build_image_error_buffer()
         self.to(self.device)
@@ -193,6 +197,7 @@ class CameraData(object):
         # ---- define filepaths ---- #
         img_filepaths = []
         dynamic_mask_filepaths, sky_mask_filepaths = [], []
+        road_mask_filepaths = []
         human_mask_filepaths, vehicle_mask_filepaths = [], []
         
         fine_mask_path = os.path.join(self.data_path, "fine_dynamic_masks")
@@ -226,11 +231,15 @@ class CameraData(object):
             sky_mask_filepaths.append(
                 os.path.join(self.data_path, "sky_masks", f"{t:03d}_{self.cam_id}.png")
             )
+            road_mask_filepaths.append(
+                os.path.join(self.data_path, "road_masks", f"{t:03d}_{self.cam_id}.png")
+            )
         self.img_filepaths = np.array(img_filepaths)
         self.dynamic_mask_filepaths = np.array(dynamic_mask_filepaths)
         self.human_mask_filepaths = np.array(human_mask_filepaths)
         self.vehicle_mask_filepaths = np.array(vehicle_mask_filepaths)
         self.sky_mask_filepaths = np.array(sky_mask_filepaths)
+        self.road_mask_filepaths = np.array(road_mask_filepaths)
         
     def load_images(self):
         images = []
@@ -373,7 +382,31 @@ class CameraData(object):
                 )
             sky_masks.append(np.array(sky_mask) > 0)
         self.sky_masks = torch.from_numpy(np.stack(sky_masks, axis=0)).float()
-        
+
+    def load_road_masks(self):
+        road_masks = []
+        for ix, fname in tqdm(
+            enumerate(self.road_mask_filepaths),
+            desc="Loading road masks",
+            dynamic_ncols=True,
+            total=len(self.road_mask_filepaths),
+        ):
+            road_mask = Image.open(fname).convert("L")
+            # resize them to the load_size
+            road_mask = road_mask.resize(
+                (self.load_size[1], self.load_size[0]), Image.NEAREST
+            )
+            if self.undistort:
+                if ix == 0:
+                    print("undistorting road mask")
+                road_mask = cv2.undistort(
+                    np.array(road_mask),
+                    self.intrinsics[ix].numpy(),
+                    self.distortions[ix].numpy(),
+                )
+            road_masks.append(np.array(road_mask) > 0)
+        self.road_masks = torch.from_numpy(np.stack(road_masks, axis=0)).float()
+
     def load_depth(
         self,
         lidar_depth_maps: Tensor,
@@ -469,6 +502,9 @@ class CameraData(object):
             self.vehicle_masks = self.vehicle_masks.to(device)
         if self.sky_masks is not None:
             self.sky_masks = self.sky_masks.to(device)
+        if self.road_masks is not None:
+            self.road_masks = self.road_masks.to(device)
+
         if self.lidar_depth_maps is not None:
             self.lidar_depth_maps = self.lidar_depth_maps.to(device)
         if self.image_error_maps is not None:
@@ -483,6 +519,7 @@ class CameraData(object):
             a dict containing the rays for rendering the given frame index.
         """
         rgb, sky_mask = None, None
+        road_mask = None
         dynamic_mask, human_mask, vehicle_mask = None, None, None
         pixel_coords, normalized_time = None, None
         egocar_mask = None
@@ -541,6 +578,19 @@ class CameraData(object):
                     .squeeze(0)
                     .squeeze(0)
                 )
+        if self.road_masks is not None:
+            road_mask = self.road_masks[frame_idx]
+            if self.downscale_factor != 1.0:
+                road_mask = (
+                    torch.nn.functional.interpolate(
+                        road_mask.unsqueeze(0).unsqueeze(0),
+                        scale_factor=self.downscale_factor,
+                        mode="nearest",
+                    )
+                    .squeeze(0)
+                    .squeeze(0)
+                )
+
         if self.dynamic_masks is not None:
             dynamic_mask = self.dynamic_masks[frame_idx]
             if self.downscale_factor != 1.0:
@@ -638,18 +688,27 @@ class CameraData(object):
             "frame_idx": frame_id,
             "pixels": rgb,
             "sky_masks": sky_mask,
+            "road_masks": road_mask,
             "dynamic_masks": dynamic_mask,
             "human_masks": human_mask,
             "vehicle_masks": vehicle_mask,
             "egocar_masks": egocar_mask,
             "lidar_depth_map": lidar_depth_map,
+            "normalized_time": self.normalized_time[frame_idx],
+            "unique_img_idx": self.unique_img_idx[frame_idx],
         }
-        image_infos = {k: v for k, v in _image_infos.items() if v is not None}
-        
+        # image_infos = {k: v for k, v in _image_infos.items() if v is not None}
+        image_infos = {k: v for k, v in _image_infos.items()}
+        if self.cam_to_worlds is not None:
+            ego_to_world = self.ego_to_worlds[frame_idx]
+        if self.cam_to_ego is not None:
+            cam_to_ego = self.cam_to_ego
         cam_infos = {
             "cam_id": camera_id,
             "cam_name": self.cam_name,
             "camera_to_world": c2w,
+            "ego_to_world": ego_to_world,
+            "cam_to_ego": cam_to_ego,
             "height": torch.tensor(img_height, dtype=torch.long, device=c2w.device),
             "width": torch.tensor(img_width, dtype=torch.long, device=c2w.device),
             "intrinsics": intrinsics,
@@ -1067,7 +1126,7 @@ class ScenePixelSource(abc.ABC):
         """
         return self.data_cfg.sampler.buffer_downscale
     
-    def prepare_novel_view_render_data(self, dataset_type: str, traj: torch.Tensor) -> list:
+    def prepare_novel_view_render_data(self, dataset_type: str, traj: torch.Tensor, cam_ids, cam_names) -> list:
         """
         Prepare all necessary elements for novel view rendering.
 
@@ -1090,10 +1149,20 @@ class ScenePixelSource(abc.ABC):
         
         original_frame_count = self.num_frames
         scaled_indices = torch.linspace(0, original_frame_count - 1, len(traj))
-        normed_time = torch.linspace(0, 1, len(traj))
+        # normed_time = torch.linspace(0, 1, len(traj))
+        normed_time = torch.linspace(0, 1, original_frame_count)
         
         render_data = []
+        camids_set = list(set(cam_ids))
+        num_camera = len(camids_set)
+
         for i in range(len(traj)):
+            camera_idx = cam_ids[i]
+            cam_name = cam_names[i]
+            frame_idx = int(i%original_frame_count)
+            img_idx = frame_idx * num_camera + camera_idx
+            print('camera_idx=',camera_idx, 'frame_idx=',frame_idx, 'img_idx=',img_idx,)
+
             c2w = traj[i]
             
             # Generate ray origins and directions
@@ -1106,6 +1175,7 @@ class ScenePixelSource(abc.ABC):
             direction_norm = direction_norm.reshape(H, W, 1)
             
             cam_infos = {
+                "cam_id": torch.tensor([cam_ids[i]], dtype=torch.long, device=self.device),
                 "camera_to_world": c2w,
                 "intrinsics": intrinsics,
                 "height": torch.tensor([H], dtype=torch.long, device=self.device),
@@ -1116,17 +1186,22 @@ class ScenePixelSource(abc.ABC):
                 "origins": origins,
                 "viewdirs": viewdirs,
                 "direction_norm": direction_norm,
-                "img_idx": torch.full((H, W), i, dtype=torch.long, device=self.device),
-                "frame_idx": torch.full((H, W), scaled_indices[i].round().long(), device=self.device),
-                "normed_time": torch.full((H, W), normed_time[i], dtype=torch.float32, device=self.device),
+                "img_idx": torch.full((H, W), img_idx, dtype=torch.long, device=self.device),
+                # "img_idx": torch.full((H, W), i, dtype=torch.long, device=self.device),
+                "frame_idx": torch.full((H, W), frame_idx,  dtype=torch.long, device=self.device),
+                # "frame_idx": torch.full((H, W), scaled_indices[i].round().long(), device=self.device),
+                "normed_time": torch.full((H, W), normed_time[frame_idx], dtype=torch.float32, device=self.device),
+                # "normed_time": torch.full((H, W), normed_time[i], dtype=torch.float32, device=self.device),
                 "pixel_coords": torch.stack(
                     [y.float() / H, x.float() / W], dim=-1
                 ),  # [H, W, 2]
             }
-            
+
             render_data.append({
+                # "img_idx": img_idx,
+                # "camera_idx": camera_idx,
+                # "cam_name": cam_name,
                 "cam_infos": cam_infos,
                 "image_infos": image_infos,
             })
-        
         return render_data

@@ -52,7 +52,8 @@ class VanillaGaussians(nn.Module):
         self.device = device
         self.ball_gaussians=self.ctrl_cfg.get("ball_gaussians", False)
         self.gaussian_2d = self.ctrl_cfg.get("gaussian_2d", False)
-        
+        self.freeze_means = self.ctrl_cfg.get("freeze_means", False)
+
         # for evaluation
         self.in_test_set = False
         
@@ -78,7 +79,8 @@ class VanillaGaussians(nn.Module):
 
     def create_from_pcd(self, init_means: torch.Tensor, init_colors: torch.Tensor) -> None:
         self._means = Parameter(init_means)
-        
+        if self.freeze_means:
+            self._means.requires_grad = False
         distances, _ = k_nearest_sklearn(self._means.data, 3)
         distances = torch.from_numpy(distances)
         # find the average of the three nearest neighbors for each point and use that as the scale
@@ -157,7 +159,8 @@ class VanillaGaussians(nn.Module):
         last_size: int,
     ) -> None:
         self.after_train(radii, xys_grad, last_size)
-        if step % self.ctrl_cfg.refine_interval == 0:
+        # if step % self.ctrl_cfg.refine_interval == 0:
+        if (not self.ctrl_cfg.get("freeze_means", False)) and (step % self.ctrl_cfg.refine_interval == 0):
             self.refinement_after(step, optimizer)
 
     def after_train(
@@ -191,14 +194,16 @@ class VanillaGaussians(nn.Module):
             )
         
     def get_gaussian_param_groups(self) -> Dict[str, List[Parameter]]:
-        return {
-            self.class_prefix+"xyz": [self._means],
-            self.class_prefix+"sh_dc": [self._features_dc],
-            self.class_prefix+"sh_rest": [self._features_rest],
-            self.class_prefix+"opacity": [self._opacities],
-            self.class_prefix+"scaling": [self._scales],
-            self.class_prefix+"rotation": [self._quats],
+        param_groups = {
+            self.class_prefix + "sh_dc": [self._features_dc],
+            self.class_prefix + "sh_rest": [self._features_rest],
+            self.class_prefix + "opacity": [self._opacities],
+            self.class_prefix + "scaling": [self._scales],
+            self.class_prefix + "rotation": [self._quats],
         }
+        if not self.freeze_means:
+            param_groups.update({self.class_prefix + "xyz": [self._means]})
+        return param_groups
     
     def get_param_groups(self) -> Dict[str, List[Parameter]]:
         return self.get_gaussian_param_groups()
@@ -415,6 +420,8 @@ class VanillaGaussians(nn.Module):
     
     def compute_reg_loss(self):
         loss_dict = {}
+        if self.reg_cfg is None:
+            return loss_dict
         sharp_shape_reg_cfg = self.reg_cfg.get("sharp_shape_reg", None)
         if sharp_shape_reg_cfg is not None:
             w = sharp_shape_reg_cfg.w
@@ -460,6 +467,8 @@ class VanillaGaussians(nn.Module):
         self._features_rest = Parameter(torch.zeros((N,) + self._features_rest.shape[1:], device=self.device))
         self._opacities = Parameter(torch.zeros((N,) + self._opacities.shape[1:], device=self.device))
         msg = super().load_state_dict(state_dict, **kwargs)
+        if self.freeze_means:
+            self._means.requires_grad = False
         return msg
     
     def export_gaussians_to_ply(self, alpha_thresh: float) -> Dict:

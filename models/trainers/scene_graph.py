@@ -1,3 +1,4 @@
+
 from typing import Dict
 import torch
 import logging
@@ -6,7 +7,8 @@ from datasets.driving_dataset import DrivingDataset
 from models.trainers.base import BasicTrainer, GSModelType
 from utils.misc import import_str
 from utils.geometry import uniform_sample_sphere
-
+import open3d as o3d
+import  numpy  as  np
 logger = logging.getLogger()
 
 class MultiTrainer(BasicTrainer):
@@ -32,7 +34,9 @@ class MultiTrainer(BasicTrainer):
             self.gaussian_classes["SMPLNodes"] = GSModelType.SMPLNodes
         if "DeformableNodes" in self.model_config:
             self.gaussian_classes["DeformableNodes"] = GSModelType.DeformableNodes
-           
+        if "Ground" in self.model_config:
+            self.gaussian_classes["Ground"] = GSModelType.Ground
+
         for class_name, model_cfg in self.model_config.items():
             # update model config for gaussian classes
             if class_name in self.gaussian_classes:
@@ -118,17 +122,36 @@ class MultiTrainer(BasicTrainer):
             model = self.models[class_name]
             
             empty = False
-            if class_name == 'Background':                
+            # if class_name == 'Background':
+            if class_name in ["Background", "Ground"]:
                 # ------ initialize gaussians ------
                 init_cfg = model_cfg.pop('init')
                 # sample points from the lidar point clouds
                 if init_cfg.get("from_lidar", None) is not None:
-                    sampled_pts, sampled_color, sampled_time = dataset.get_lidar_samples(
-                        **init_cfg.from_lidar, device=self.device
+                    # sampled_pts, sampled_color, sampled_time = dataset.get_lidar_samples(
+                    #     **init_cfg.from_lidar, device=self.device
+                    # )
+                    get_ground_ply = False
+                    if class_name == 'Ground':
+                        get_ground_ply = True
+                    sampled_pts, sampled_color, sampled_time = dataset.get_lidar_samples_from_ply(
+                        **init_cfg.from_lidar, is_ground_ply=get_ground_ply, device=self.device
                     )
                 else:
                     sampled_pts, sampled_color, sampled_time = \
                         torch.empty(0, 3).to(self.device), torch.empty(0, 3).to(self.device), None
+
+                if class_name == 'Background' and ("voxel_size" in init_cfg) and (init_cfg.voxel_size > 0):
+                    # do downsample_factor
+                    point_cloud = o3d.geometry.PointCloud()
+                    point_cloud.points = o3d.utility.Vector3dVector(sampled_pts.cpu().detach().numpy())
+                    point_cloud.colors = o3d.utility.Vector3dVector(sampled_color.cpu().detach().numpy())
+                    downsampled_point_cloud = point_cloud.voxel_down_sample(voxel_size=init_cfg.voxel_size)
+                    downsampled_point_cloud, _ = downsampled_point_cloud.remove_radius_outlier(nb_points=10, radius=0.5)
+                    sampled_pts_np = np.asarray(downsampled_point_cloud.points).astype(np.float32)
+                    sampled_color_np = np.asarray(downsampled_point_cloud.colors).astype(np.float32)
+                    sampled_pts = torch.from_numpy(sampled_pts_np).to(self.device)
+                    sampled_color = torch.from_numpy(sampled_color_np).to(self.device)
                 
                 random_pts = []
                 num_near_pts = init_cfg.get('near_randoms', 0)
@@ -149,11 +172,14 @@ class MultiTrainer(BasicTrainer):
                     sampled_pts = torch.cat([sampled_pts, valid_pts], dim=0)
                     sampled_color = torch.cat([sampled_color, torch.rand(valid_pts.shape, ).to(self.device)], dim=0)
                 
-                processed_init_pts = dataset.filter_pts_in_boxes(
-                    seed_pts=sampled_pts,
-                    seed_colors=sampled_color,
-                    valid_instances_dict=allnode_pts_dict
-                )
+                if class_name == "Ground":
+                    processed_init_pts = {"pts": sampled_pts, "colors": sampled_color}
+                else:
+                    processed_init_pts = dataset.filter_pts_in_boxes(
+                        seed_pts=sampled_pts,
+                        seed_colors=sampled_color,
+                        valid_instances_dict=allnode_pts_dict
+                    )
                 
                 model.create_from_pcd(
                     init_means=processed_init_pts["pts"], init_colors=processed_init_pts["colors"]
@@ -266,9 +292,21 @@ class MultiTrainer(BasicTrainer):
                     outputs[class_name+"_opacity"] = sep_opacity
                     outputs[class_name+"_depth"] = sep_depth
 
+        gaussian_mask = self.pts_labels == self.gaussian_classes["Background"]
+        _, _, sep_opacity = render_fn(gaussian_mask)
+        outputs["Background_opacity"] = sep_opacity
+
+        if "Ground" in self.gaussian_classes:
+            gaussian_mask_g = self.pts_labels == self.gaussian_classes["Ground"]
+            _, _, sep_opacity_g = render_fn(gaussian_mask_g)
+            outputs["Ground_opacity"] = sep_opacity_g
+
         if not self.training or self.render_dynamic_mask:
             with torch.no_grad():
                 gaussian_mask = self.pts_labels != self.gaussian_classes["Background"]
+                if "Ground" in self.gaussian_classes:
+                    gaussian_mask = gaussian_mask & (self.pts_labels != self.gaussian_classes["Ground"])
+
                 sep_rgb, sep_depth, sep_opacity = render_fn(gaussian_mask)
                 outputs["Dynamic_rgb"] = self.affine_transformation(sep_rgb, image_infos)
                 outputs["Dynamic_opacity"] = sep_opacity
@@ -281,8 +319,9 @@ class MultiTrainer(BasicTrainer):
         outputs: Dict[str, torch.Tensor],
         image_infos: Dict[str, torch.Tensor],
         cam_infos: Dict[str, torch.Tensor],
+        from_synthesis: bool = False,
     ) -> Dict[str, torch.Tensor]:
-        loss_dict = super().compute_losses(outputs, image_infos, cam_infos)
+        loss_dict = super().compute_losses(outputs, image_infos, cam_infos, from_synthesis)
         
         return loss_dict
     
@@ -294,3 +333,4 @@ class MultiTrainer(BasicTrainer):
         metric_dict = super().compute_metrics(outputs, image_infos)
         
         return metric_dict
+

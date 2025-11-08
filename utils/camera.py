@@ -57,10 +57,13 @@ def look_at_rotation(direction: torch.Tensor, up: torch.Tensor = torch.tensor([0
 
 def get_interp_novel_trajectories(
     dataset_type: str,
-    scene_idx: str,
+    # scene_idx: str,
     per_cam_poses: Dict[int, torch.Tensor],
-    traj_type: str = "front_center_interp",
-    target_frames: int = 100
+    traj_type: dict,
+    # traj_type: str = "front_center_interp",
+    target_frames: int = 100,
+    cam2ego: Dict[int, torch.Tensor] = None,
+    ego2worlds: Dict[int, torch.Tensor] = None,
 ) -> torch.Tensor:
     original_frames = per_cam_poses[list(per_cam_poses.keys())[0]].shape[0]
     
@@ -69,11 +72,19 @@ def get_interp_novel_trajectories(
         "s_curve": s_curve,
         "three_key_poses": three_key_poses_trajectory
     }
-    
-    if traj_type not in trajectory_generators:
-        raise ValueError(f"Unknown trajectory type: {traj_type}")
-    
-    return trajectory_generators[traj_type](dataset_type, per_cam_poses, original_frames, target_frames)
+    if traj_type.type in trajectory_generators:
+        return trajectory_generators[traj_type.type](dataset_type, per_cam_poses, original_frames, target_frames)
+
+    custom_trajectory_generators = {
+        "relative_lane_shift": relative_lane_shift,
+        "absolute_poses": absolute_poses,
+        "lane_change_smooth_trajectory": lane_change_smooth_trajectory,
+    }
+
+    if traj_type.type in custom_trajectory_generators:
+        return custom_trajectory_generators[traj_type.type](cam2ego, ego2worlds, traj_type)
+
+    raise ValueError(f"Unknown trajectory type: {traj_type}")
 
 def front_center_interp(
     dataset_type: str, per_cam_poses: Dict[int, torch.Tensor], original_frames: int, target_frames: int, num_loops: int = 1
@@ -152,3 +163,71 @@ def three_key_poses_trajectory(
     # Stack the key poses and interpolate
     key_poses = torch.stack(key_poses)
     return interpolate_poses(key_poses, target_frames)
+
+
+
+def relative_lane_shift(
+    cam2egos: Dict[int, torch.Tensor] = None, ego2worlds: Dict[int, torch.Tensor] = None, traj_type: dict = None
+) -> torch.Tensor:
+    """
+    Generate a trajectory by shifting the ego vehicle along the x-axis.
+    Currently only support x-axis shift.
+    """
+    dis_shift = traj_type.distance
+
+    cam_poses = []
+    for cam_id in cam2egos:
+        cam2ego = cam2egos[cam_id].clone().detach()
+        # cam2ego[0, 3] += dis_shift  # X-Front
+        cam2ego[1, 3] += dis_shift  # Y-Left
+        # cam2ego[2, 3] += dis_shift  # Z-Up
+        for ego2world in ego2worlds[cam_id]:
+            cam_pose = ego2world @ cam2ego
+            cam_poses.append(cam_pose)
+
+    return torch.stack(cam_poses)
+
+
+def lane_change_smooth_trajectory(
+    cam2egos: Dict[int, torch.Tensor],
+    ego2worlds: Dict[int, torch.Tensor],
+    traj_type: dict
+) -> torch.Tensor:
+
+    direction = traj_type.get("direction", "x")
+    total_shift = traj_type.get("distance", 3.0)
+    shift_time = traj_type.get("shift_secs", 5)
+    smooth_frames = shift_time * 10
+    #interp_mode = traj_type.get("mode", "linear")
+
+    all_poses = []
+
+    for cam_id in cam2egos:
+        base_cam2ego = cam2egos[cam_id].clone().detach()
+        num_required = len(ego2worlds[cam_id])
+
+        cam_traj = []
+        for i in range(num_required):
+            if i < smooth_frames:
+                t = i / (smooth_frames - 1)
+                shift = total_shift * t
+            else:
+                shift = total_shift
+
+            shifted_cam2ego = base_cam2ego.clone()
+            shifted_cam2ego[1, 3] += shift # 平移
+
+            base_ego2world = ego2worlds[cam_id][i]
+            cam_pose = base_ego2world @ shifted_cam2ego
+            cam_traj.append(cam_pose)
+
+        all_poses.extend(cam_traj)
+
+    return torch.stack(all_poses)
+
+
+def absolute_poses(
+    cam2egos: Dict[int, torch.Tensor] = None, ego2worlds: Dict[int, torch.Tensor] = None, traj_type: dict = None
+) -> torch.Tensor:
+    raise NotImplementedError("Absolute trajectory generation is not implemented yet.")
+
