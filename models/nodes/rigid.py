@@ -123,6 +123,9 @@ class RigidNodes(VanillaGaussians):
 
     def refinement_after(self, step: int, optimizer: torch.optim.Optimizer) -> None:
         assert step == self.step
+        scene_transfer = True  # TODOYHH
+        if scene_transfer:
+            return
         if self.step <= self.ctrl_cfg.warmup_steps:
             return
         with torch.no_grad():
@@ -498,6 +501,10 @@ class RigidNodes(VanillaGaussians):
             torch.zeros(self.num_frames, self.num_instances, 4, device=self.device)
         )
         msg = super().load_state_dict(state_dict, **kwargs)
+        scene_transfer = True  # TODOYHH
+        if scene_transfer:
+            self.instances_trans.requires_grad = False
+            self.instances_quats.requires_grad = False
         return msg
     
     # editting functions

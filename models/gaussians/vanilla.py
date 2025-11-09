@@ -210,6 +210,9 @@ class VanillaGaussians(nn.Module):
 
     def refinement_after(self, step, optimizer: torch.optim.Optimizer) -> None:
         assert step == self.step
+        scene_transfer = True  # TODOYHH
+        if scene_transfer:
+            return
         if self.step <= self.ctrl_cfg.warmup_steps:
             return
         with torch.no_grad():
@@ -469,6 +472,13 @@ class VanillaGaussians(nn.Module):
         msg = super().load_state_dict(state_dict, **kwargs)
         if self.freeze_means:
             self._means.requires_grad = False
+
+        scene_transfer = True  # TODOYHH
+        if scene_transfer:
+            self._means.requires_grad = False
+            self._scales.requires_grad = False
+            self._quats.requires_grad = False
+
         return msg
     
     def export_gaussians_to_ply(self, alpha_thresh: float) -> Dict:
